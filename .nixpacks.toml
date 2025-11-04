@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs"]
+
+[phases.install]
+cmds = [
+  "rm -rf node_modules",
+  "npm install --no-audit --no-fund"
+]
+
+[start]
+cmd = "node server-railway.js"
