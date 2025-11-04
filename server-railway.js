@@ -46,7 +46,7 @@ if (MONGO_URI) {
 
 // ===============================
 // 🌐 URL del modelo local
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://bitter-pants-win.loca.lt";
+const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://rotten-teeth-stay.loca.lt";
 
 // ===============================
 // 🧠 Función de fetch con reintentos y timeout
