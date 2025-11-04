@@ -1,0 +1,8 @@
+[build]
+builder = "NIXPACKS"
+
+[start]
+cmd = "node server-railway.js"
+
+# 👇 Fuerza a Railway a usar la raíz del repo (no /backend)
+root = "./"
