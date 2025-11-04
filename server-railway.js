@@ -1,5 +1,5 @@
 // ===============================
-// 🌍 Backend Relay para Railway
+// 🌍 Backend Relay para Railway + n8n
 // ===============================
 import express from "express";
 import cors from "cors";
@@ -45,8 +45,9 @@ if (MONGO_URI) {
 }
 
 // ===============================
-// 🌐 URL del modelo local
+// 🌐 URL del modelo local y n8n
 const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://soft-pandas-hammer.loca.lt";
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || ""; // Debes poner aquí tu webhook de n8n
 
 // ===============================
 // 🧠 Función de fetch con reintentos y timeout
@@ -67,9 +68,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
                 throw new Error(`HTTP ${response.status}: ${text}`);
             }
 
-            // Siempre leer como texto
-            const text = await response.text();
-            return text;
+            return await response.text();
         } catch (err) {
             console.warn(`⚠️ Fetch intento ${attempt} fallido: ${err.message}`);
             if (attempt === retries) throw err;
@@ -78,14 +77,15 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 }
 
 // ===============================
-// 🧠 Endpoint principal: relay a tu modelo local
+// 🧠 Endpoint principal: relay a tu modelo local + n8n
 app.post("/api/chat", async (req, res) => {
     try {
-        const { prompt, sessionId } = req.body;
+        const { prompt, sessionId, formData } = req.body;
         if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
         console.log("🚀 Relay → reenviando prompt al modelo local...");
 
+        // 🔹 Obtener respuesta del modelo
         const data = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -93,9 +93,24 @@ app.post("/api/chat", async (req, res) => {
         });
 
         // 🔹 Envuelve cualquier texto en JSON válido
-        res.type("application/json").send(
-            typeof data === "string" ? JSON.stringify({ message: data }) : JSON.stringify(data)
-        );
+        const modelResponse = typeof data === "string" ? { message: data } : data;
+
+        // 🔹 Enviar a n8n si hay webhook definido y formData
+        if (N8N_WEBHOOK_URL && formData) {
+            try {
+                const n8nResponse = await fetchWithRetry(N8N_WEBHOOK_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(formData),
+                });
+                console.log("📡 Datos enviados a n8n:", formData);
+            } catch (n8nErr) {
+                console.error("❌ Error enviando a n8n:", n8nErr.message);
+            }
+        }
+
+        // 🔙 Retorna respuesta al frontend
+        res.type("application/json").send(modelResponse);
     } catch (err) {
         console.error("❌ Error en relay:", err);
         res.status(500).json({
@@ -114,7 +129,7 @@ app.get("/api/history", (req, res) => {
 // ===============================
 // 🩵 Endpoint raíz
 app.get("/", (req, res) => {
-    res.send("✅ Servidor Relay de José Manaure en Railway, conectado al modelo local.");
+    res.send("✅ Servidor Relay de José Manaure en Railway, conectado al modelo local y listo para n8n.");
 });
 
 // ===============================
