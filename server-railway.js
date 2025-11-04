@@ -93,7 +93,7 @@ app.get("/api/history", (req, res) => {
 // 🩵 Endpoint raíz
 // ===============================
 app.get("/", (req, res) => {
-    res.send("✅ Servidor Relay de José Manaure en Railway, conectado al modelo local.");
+    res.send("✅ Servidor Relay de José Manaure en Railway, conecta do al modelo local.");
 });
 
 // ===============================
