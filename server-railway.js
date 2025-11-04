@@ -50,7 +50,7 @@ const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://soft-pandas-hamm
 
 // ===============================
 // 🧠 Función de fetch con reintentos y timeout
-async function fetchWithRetry(url, options = {}, retries = 3, timeout = 60000) { // 60s timeout
+async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const controller = new AbortController();
@@ -60,31 +60,19 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 60000) {
                 ...options,
                 signal: controller.signal,
             });
-
             clearTimeout(id);
 
             if (!response.ok) {
-                const text = await response.text().catch(() => '');
+                const text = await response.text();
                 throw new Error(`HTTP ${response.status}: ${text}`);
             }
 
-            // Intentamos parsear JSON si es posible
-            const contentType = response.headers.get("content-type");
-            if (contentType && contentType.includes("application/json")) {
-                return await response.json();
-            } else {
-                const text = await response.text();
-                try {
-                    return JSON.parse(text);
-                } catch {
-                    return { message: text };
-                }
-            }
+            // Siempre leer como texto
+            const text = await response.text();
+            return text;
         } catch (err) {
             console.warn(`⚠️ Fetch intento ${attempt} fallido: ${err.message}`);
             if (attempt === retries) throw err;
-            // Espera progresiva antes del siguiente intento
-            await new Promise(r => setTimeout(r, 1000 * attempt));
         }
     }
 }
@@ -104,13 +92,15 @@ app.post("/api/chat", async (req, res) => {
             body: JSON.stringify({ prompt, sessionId }),
         });
 
-        res.type("application/json").send(JSON.stringify(data));
+        // 🔹 Envuelve cualquier texto en JSON válido
+        res.type("application/json").send(
+            typeof data === "string" ? JSON.stringify({ message: data }) : JSON.stringify(data)
+        );
     } catch (err) {
         console.error("❌ Error en relay:", err);
         res.status(500).json({
             error: "Error comunicando con el modelo local.",
             details: err.message,
-            suggestion: "Revisa que tu túnel Ngrok/LocalTunnel esté activo y estable."
         });
     }
 });
