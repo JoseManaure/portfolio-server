@@ -4,6 +4,7 @@
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
+import fetch from "node-fetch"; // 👈 Asegúrate de importar esto
 
 // ===============================
 // ⚙️ Configuración inicial
@@ -15,8 +16,8 @@ app.use(express.json());
 // 🔧 CORS
 // ===============================
 const allowedOrigins = [
-    "https://pfweb-nu.vercel.app",
-    "http://localhost:3000",
+    "https://pfweb-nu.vercel.app", // dominio del frontend en Vercel
+    "http://localhost:3000", // entorno local
 ];
 
 app.use((req, res, next) => {
@@ -34,16 +35,21 @@ app.use((req, res, next) => {
 // ===============================
 // 📦 MongoDB (opcional, puedes omitir si solo relay)
 // ===============================
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/chatdb";
-mongoose
-    .connect(MONGO_URI)
-    .then(() => console.log("✅ Conectado a MongoDB (Railway)"))
-    .catch((err) => console.error("❌ Error Mongo:", err));
+const MONGO_URI = process.env.MONGO_URI || "";
+if (MONGO_URI) {
+    mongoose
+        .connect(MONGO_URI)
+        .then(() => console.log("✅ Conectado a MongoDB (Railway)"))
+        .catch((err) => console.error("❌ Error Mongo:", err));
+} else {
+    console.log("⚠️ MongoDB deshabilitado (sin MONGO_URI)");
+}
 
 // ===============================
-// 🌐 URL del modelo local (LocalTunnel o Ngrok)
+// 🌐 URL del modelo local (Ngrok o LocalTunnel)
 // ===============================
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://sour-pandas-lie.loca.lt";
+const LOCAL_MODEL_URL =
+    process.env.LOCAL_MODEL_URL || "https://sour-pandas-lie.loca.lt";
 
 // ===============================
 // 🧠 Endpoint principal: relay a tu modelo local
@@ -53,7 +59,7 @@ app.post("/api/chat", async (req, res) => {
         const { prompt, sessionId } = req.body;
         if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
-        console.log("🚀 Relay -> reenviando prompt al modelo local...");
+        console.log("🚀 Relay → reenviando prompt al modelo local...");
 
         // 🔁 Reenvía la solicitud al modelo local
         const response = await fetch(`${LOCAL_MODEL_URL}/api/chat`, {
@@ -69,10 +75,7 @@ app.post("/api/chat", async (req, res) => {
 
         // 🔙 Retorna la respuesta al frontend
         const data = await response.text();
-        res.setHeader("Content-Type", "text/event-stream");
-        res.write(data);
-        res.end();
-
+        res.type("application/json").send(data);
     } catch (err) {
         console.error("❌ Error en relay:", err);
         res.status(500).json({ error: "Error comunicando con el modelo local." });
@@ -82,7 +85,7 @@ app.post("/api/chat", async (req, res) => {
 // ===============================
 // 🔹 Historial de chat (opcional)
 // ===============================
-app.get("/api/history", async (req, res) => {
+app.get("/api/history", (req, res) => {
     res.status(200).json({ message: "Historial deshabilitado en versión relay." });
 });
 
@@ -97,6 +100,6 @@ app.get("/", (req, res) => {
 // 🚀 Arranque del servidor
 // ===============================
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 Backend Relay corriendo en puerto ${PORT}`);
 });
