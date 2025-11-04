@@ -16,7 +16,7 @@ app.use(express.json());
 // 🔧 CORS
 // ===============================
 const allowedOrigins = [
-    "https://pfweb-nu.vercel.app", // dominio del frontend en Vercel
+    "https://pfweb-git-main-joses-projects-e0239e45.vercel.app/", // dominio del frontend en Vercel
     "http://localhost:3000", // entorno local
 ];
 
