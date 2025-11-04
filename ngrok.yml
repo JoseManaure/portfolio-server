@@ -1,0 +1,7 @@
+tunnels:
+  chat-backend:
+    proto: http
+    addr: 4000
+    basic_auth:
+      - "usuario:contraseña"
+ 
