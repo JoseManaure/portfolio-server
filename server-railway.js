@@ -49,7 +49,7 @@ if (MONGO_URI) {
 // 🌐 URL del modelo local (Ngrok o LocalTunnel)
 // ===============================
 const LOCAL_MODEL_URL =
-    process.env.LOCAL_MODEL_URL || "https://sour-pandas-lie.loca.lt";
+    process.env.LOCAL_MODEL_URL || "https://bitter-pants-win.loca.lt";
 
 // ===============================
 // 🧠 Endpoint principal: relay a tu modelo local
