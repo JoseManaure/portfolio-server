@@ -1,11 +1,14 @@
 // ===============================
-// 🌍 Backend Relay para Railway + ngrok
+// 🌍 Backend Relay para Railway con SSE + n8n
 // ===============================
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import fetch from "node-fetch";
 
+// ===============================
+// ⚙️ Configuración inicial
+// ===============================
 const app = express();
 app.use(express.json());
 
@@ -29,13 +32,10 @@ app.use((req, res, next) => {
 // 📦 MongoDB (opcional)
 const MONGO_URI = process.env.MONGO_URI || "";
 if (MONGO_URI) {
-    mongoose
-        .connect(MONGO_URI)
-        .then(() => console.log("✅ Conectado a MongoDB"))
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("✅ Conectado a MongoDB (Railway)"))
         .catch((err) => console.error("❌ Error Mongo:", err));
-} else {
-    console.log("⚠️ MongoDB deshabilitado (sin MONGO_URI)");
-}
+} else console.log("⚠️ MongoDB deshabilitado (sin MONGO_URI)");
 
 // ===============================
 // 🌐 URLs
@@ -51,8 +51,11 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
             const id = setTimeout(() => controller.abort(), timeout);
             const response = await fetch(url, { ...options, signal: controller.signal });
             clearTimeout(id);
-            if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-            return await response.text();
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`HTTP ${response.status}: ${text}`);
+            }
+            return response;
         } catch (err) {
             console.warn(`⚠️ Fetch intento ${attempt} fallido: ${err.message}`);
             if (attempt === retries) throw err;
@@ -61,44 +64,35 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 }
 
 // ===============================
-// 🧠 Endpoint principal: SSE relay + n8n
-app.post("/api/chat", async (req, res) => {
+// 🧠 Endpoint SSE al modelo local
+app.get("/api/chat-sse", async (req, res) => {
+    const { prompt, sessionId } = req.query;
+    if (!prompt) return res.status(400).send("Falta prompt");
+
+    res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+    });
+
     try {
-        const { prompt, sessionId } = req.body;
-        if (!prompt) return res.status(400).json({ error: "Falta prompt" });
-
-        console.log("🚀 Relay → reenviando prompt al modelo local...");
-
-        // Configuramos SSE
-        res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-        });
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-        const response = await fetch(`${LOCAL_MODEL_URL}/api/chat`, {
+        const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt, sessionId }),
-            signal: controller.signal,
         });
-
-        clearTimeout(timeoutId);
 
         if (!response.body) throw new Error("No hay body del modelo local");
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
-        // 🔹 Stream SSE real
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
 
-            let chunk = decoder.decode(value).replace(/^data:\s*/g, "").trim();
+            let chunk = decoder.decode(value);
+            chunk = chunk.replace(/^data:\s*/g, "").trim();
             if (!chunk || chunk === "[FIN]") continue;
 
             res.write(`data: ${chunk}\n\n`);
@@ -107,7 +101,7 @@ app.post("/api/chat", async (req, res) => {
         res.write("data: [FIN]\n\n");
         res.end();
 
-        // 🔹 Opcional: enviar datos a n8n
+        // 🔹 Enviar también a n8n
         try {
             await fetchWithRetry(N8N_WEBHOOK_URL, {
                 method: "POST",
@@ -120,61 +114,27 @@ app.post("/api/chat", async (req, res) => {
         }
 
     } catch (err) {
-        console.error("❌ Error en relay:", err);
-        res.write(`data: ❌ Error comunicando con el modelo local: ${err.message}\n\n`);
-        res.end();
-    }
-});
-app.get("/api/chat-sse", async (req, res) => {
-    try {
-        const { prompt, sessionId } = req.query;
-        if (!prompt) return res.status(400).send("Falta prompt");
-
-        res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-        });
-
-        const response = await fetch(`${LOCAL_MODEL_URL}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, sessionId }),
-        });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            let chunk = decoder.decode(value).replace(/^data:\s*/g, "").trim();
-            if (!chunk || chunk === "[FIN]") continue;
-            res.write(`data: ${chunk}\n\n`);
-        }
-
-        res.write("data: [FIN]\n\n");
-        res.end();
-
-    } catch (err) {
+        console.error("❌ Error SSE:", err);
         res.write(`data: ❌ Error: ${err.message}\n\n`);
         res.end();
     }
 });
 
 // ===============================
-// 🔹 Historial (deshabilitado)
-app.get("/api/history", (_, res) => {
+// 🔹 Historial de chat
+app.get("/api/history", (req, res) => {
     res.status(200).json({ message: "Historial deshabilitado en versión relay." });
 });
 
 // ===============================
-// 🩵 Raíz
-app.get("/", (_, res) => {
-    res.send("✅ Servidor Relay funcionando. SSE + n8n relay listo.");
+// 🩵 Endpoint raíz
+app.get("/", (req, res) => {
+    res.send("✅ Backend Relay de José Manaure en Railway, SSE listo y conectado al modelo local.");
 });
 
 // ===============================
-// 🚀 Servidor
+// 🚀 Arranque del servidor
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Backend Relay corriendo en puerto ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Backend Relay corriendo en puerto ${PORT}`);
+});
