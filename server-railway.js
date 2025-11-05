@@ -45,11 +45,8 @@ if (MONGO_URI) {
 }
 
 // ===============================
-// 🌐 URL del modelo local
+// 🌐 URLs
 const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://soft-pandas-hammer.loca.lt";
-
-// ===============================
-// 🌐 URL de n8n
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://f8e85894b3ed.ngrok-free.app/webhook";
 
 // ===============================
@@ -60,10 +57,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
 
-            const response = await fetch(url, {
-                ...options,
-                signal: controller.signal,
-            });
+            const response = await fetch(url, { ...options, signal: controller.signal });
             clearTimeout(id);
 
             if (!response.ok) {
@@ -80,9 +74,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 }
 
 // ===============================
-// 🧠 Endpoint principal: relay a tu modelo local
-// ===============================
-// 🧠 Endpoint principal: relay SSE
+// 🧠 Endpoint principal: relay SSE al modelo local
 app.post("/api/chat", async (req, res) => {
     try {
         const { prompt, sessionId } = req.body;
@@ -114,6 +106,7 @@ app.post("/api/chat", async (req, res) => {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
+        // Stream SSE real
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -122,13 +115,24 @@ app.post("/api/chat", async (req, res) => {
             chunk = chunk.replace(/^data:\s*/g, "").trim();
             if (!chunk || chunk === "[FIN]") continue;
 
-            // Enviamos cada chunk al frontend como SSE
             res.write(`data: ${chunk}\n\n`);
         }
 
-        // Indicamos fin del stream
+        // Fin del stream
         res.write("data: [FIN]\n\n");
         res.end();
+
+        // 🔹 Opcional: enviar datos a n8n
+        try {
+            await fetchWithRetry(N8N_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt, sessionId }),
+            });
+            console.log("📡 Datos enviados a n8n");
+        } catch (err) {
+            console.error("❌ Error enviando a n8n:", err.message);
+        }
 
     } catch (err) {
         console.error("❌ Error en relay:", err);
@@ -138,7 +142,7 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // ===============================
-// 🔹 Historial de chat
+// 🔹 Historial de chat (deshabilitado en relay)
 app.get("/api/history", (req, res) => {
     res.status(200).json({ message: "Historial deshabilitado en versión relay." });
 });
