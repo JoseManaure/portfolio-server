@@ -1,14 +1,11 @@
 // ===============================
-// 🌍 Backend Relay para Railway
+// 🌍 Backend Relay para Railway + ngrok
 // ===============================
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import fetch from "node-fetch";
 
-// ===============================
-// ⚙️ Configuración inicial
-// ===============================
 const app = express();
 app.use(express.json());
 
@@ -19,15 +16,11 @@ const allowedOrigins = [
     "https://pfweb-nu.vercel.app",
     "http://localhost:3000",
 ];
-
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (allowedOrigins.includes(origin)) {
-        res.header("Access-Control-Allow-Origin", origin);
-    }
+    if (allowedOrigins.includes(origin)) res.header("Access-Control-Allow-Origin", origin);
     res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
     if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
 });
@@ -38,7 +31,7 @@ const MONGO_URI = process.env.MONGO_URI || "";
 if (MONGO_URI) {
     mongoose
         .connect(MONGO_URI)
-        .then(() => console.log("✅ Conectado a MongoDB (Railway)"))
+        .then(() => console.log("✅ Conectado a MongoDB"))
         .catch((err) => console.error("❌ Error Mongo:", err));
 } else {
     console.log("⚠️ MongoDB deshabilitado (sin MONGO_URI)");
@@ -50,21 +43,15 @@ const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://soft-pandas-hamm
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://f8e85894b3ed.ngrok-free.app/webhook";
 
 // ===============================
-// 🧠 Función de fetch con reintentos y timeout
+// 🧠 Función fetch con reintentos
 async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
-
             const response = await fetch(url, { ...options, signal: controller.signal });
             clearTimeout(id);
-
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(`HTTP ${response.status}: ${text}`);
-            }
-
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
             return await response.text();
         } catch (err) {
             console.warn(`⚠️ Fetch intento ${attempt} fallido: ${err.message}`);
@@ -74,7 +61,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 }
 
 // ===============================
-// 🧠 Endpoint principal: relay SSE al modelo local
+// 🧠 Endpoint principal: SSE relay + n8n
 app.post("/api/chat", async (req, res) => {
     try {
         const { prompt, sessionId } = req.body;
@@ -106,19 +93,17 @@ app.post("/api/chat", async (req, res) => {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
-        // Stream SSE real
+        // 🔹 Stream SSE real
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
 
-            let chunk = decoder.decode(value);
-            chunk = chunk.replace(/^data:\s*/g, "").trim();
+            let chunk = decoder.decode(value).replace(/^data:\s*/g, "").trim();
             if (!chunk || chunk === "[FIN]") continue;
 
             res.write(`data: ${chunk}\n\n`);
         }
 
-        // Fin del stream
         res.write("data: [FIN]\n\n");
         res.end();
 
@@ -142,20 +127,18 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // ===============================
-// 🔹 Historial de chat (deshabilitado en relay)
-app.get("/api/history", (req, res) => {
+// 🔹 Historial (deshabilitado)
+app.get("/api/history", (_, res) => {
     res.status(200).json({ message: "Historial deshabilitado en versión relay." });
 });
 
 // ===============================
-// 🩵 Endpoint raíz
-app.get("/", (req, res) => {
-    res.send("✅ Servidor Relay de José Manaure en Railway, conectado al modelo local.");
+// 🩵 Raíz
+app.get("/", (_, res) => {
+    res.send("✅ Servidor Relay funcionando. SSE + n8n relay listo.");
 });
 
 // ===============================
-// 🚀 Arranque del servidor
+// 🚀 Servidor
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Backend Relay corriendo en puerto ${PORT}`);
-});
+app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Backend Relay corriendo en puerto ${PORT}`));
