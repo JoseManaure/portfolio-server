@@ -1,5 +1,5 @@
 // ===============================
-// 🌍 Backend Relay para Railway + n8n
+// 🌍 Backend Relay para Railway
 // ===============================
 import express from "express";
 import cors from "cors";
@@ -45,9 +45,12 @@ if (MONGO_URI) {
 }
 
 // ===============================
-// 🌐 URL del modelo local y n8n
+// 🌐 URL del modelo local
 const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://soft-pandas-hammer.loca.lt";
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://f8e85894b3ed.ngrok-free.app"; // Debes poner aquí tu webhook de n8n
+
+// ===============================
+// 🌐 URL de n8n
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://tu-n8n-url/webhook";
 
 // ===============================
 // 🧠 Función de fetch con reintentos y timeout
@@ -77,40 +80,38 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 }
 
 // ===============================
-// 🧠 Endpoint principal: relay a tu modelo local + n8n
+// 🧠 Endpoint principal: relay a tu modelo local
 app.post("/api/chat", async (req, res) => {
     try {
-        const { prompt, sessionId, formData } = req.body;
+        const { prompt, sessionId, nombre, apellido, email, asunto } = req.body;
         if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
         console.log("🚀 Relay → reenviando prompt al modelo local...");
 
-        // 🔹 Obtener respuesta del modelo
         const data = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt, sessionId }),
         });
 
-        // 🔹 Envuelve cualquier texto en JSON válido
-        const modelResponse = typeof data === "string" ? { message: data } : data;
-
-        // 🔹 Enviar a n8n si hay webhook definido y formData
-        if (N8N_WEBHOOK_URL && formData) {
-            try {
-                const n8nResponse = await fetchWithRetry(N8N_WEBHOOK_URL, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(formData),
-                });
-                console.log("📡 Datos enviados a n8n:", formData);
-            } catch (n8nErr) {
-                console.error("❌ Error enviando a n8n:", n8nErr.message);
-            }
+        // 🔹 Enviar a n8n (sin bloquear la respuesta del chat)
+        if (nombre && apellido && email && asunto) {
+            (async () => {
+                try {
+                    await fetch(N8N_WEBHOOK_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ nombre, apellido, email, asunto }),
+                    });
+                    console.log("📡 Datos enviados a n8n");
+                } catch (err) {
+                    console.warn("⚠️ Error enviando a n8n:", err.message);
+                }
+            })();
         }
 
-        // 🔙 Retorna respuesta al frontend
-        res.type("application/json").send(modelResponse);
+        // Devuelve siempre JSON correcto
+        res.type("application/json").send(data);
     } catch (err) {
         console.error("❌ Error en relay:", err);
         res.status(500).json({
@@ -129,7 +130,7 @@ app.get("/api/history", (req, res) => {
 // ===============================
 // 🩵 Endpoint raíz
 app.get("/", (req, res) => {
-    res.send("✅ Servidor Relay de José Manaure en Railway, conectado al modelo local y listo para n8n.");
+    res.send("✅ Servidor Relay de José Manaure en Railway, conectado al modelo local.");
 });
 
 // ===============================
