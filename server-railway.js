@@ -125,6 +125,42 @@ app.post("/api/chat", async (req, res) => {
         res.end();
     }
 });
+app.get("/api/chat-sse", async (req, res) => {
+    try {
+        const { prompt, sessionId } = req.query;
+        if (!prompt) return res.status(400).send("Falta prompt");
+
+        res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+        });
+
+        const response = await fetch(`${LOCAL_MODEL_URL}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, sessionId }),
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            let chunk = decoder.decode(value).replace(/^data:\s*/g, "").trim();
+            if (!chunk || chunk === "[FIN]") continue;
+            res.write(`data: ${chunk}\n\n`);
+        }
+
+        res.write("data: [FIN]\n\n");
+        res.end();
+
+    } catch (err) {
+        res.write(`data: ❌ Error: ${err.message}\n\n`);
+        res.end();
+    }
+});
 
 // ===============================
 // 🔹 Historial (deshabilitado)
