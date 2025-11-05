@@ -84,19 +84,14 @@ app.get("/api/chat-sse", async (req, res) => {
 
         if (!response.body) throw new Error("No hay body del modelo local");
 
-        const reader = response.body.getReader();
         const decoder = new TextDecoder();
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            let chunk = decoder.decode(value);
-            chunk = chunk.replace(/^data:\s*/g, "").trim();
-            if (!chunk || chunk === "[FIN]") continue;
-
-            res.write(`data: ${chunk}\n\n`);
+        for await (const chunk of response.body) {
+            let textChunk = decoder.decode(chunk);
+            textChunk = textChunk.replace(/^data:\s*/g, "").trim();
+            if (!textChunk || textChunk === "[FIN]") continue;
+            res.write(`data: ${textChunk}\n\n`);
         }
+
 
         res.write("data: [FIN]\n\n");
         res.end();
