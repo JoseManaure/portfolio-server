@@ -47,7 +47,7 @@ if (MONGO_URI) {
 // ===============================
 // 🌐 URL del modelo local y n8n
 const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://soft-pandas-hammer.loca.lt";
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || ""; // Debes poner aquí tu webhook de n8n
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://f8e85894b3ed.ngrok-free.app"; // Debes poner aquí tu webhook de n8n
 
 // ===============================
 // 🧠 Función de fetch con reintentos y timeout
