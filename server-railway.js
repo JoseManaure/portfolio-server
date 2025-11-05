@@ -81,43 +81,59 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 
 // ===============================
 // 🧠 Endpoint principal: relay a tu modelo local
+// ===============================
+// 🧠 Endpoint principal: relay SSE
 app.post("/api/chat", async (req, res) => {
     try {
-        const { prompt, sessionId, nombre, apellido, email, asunto } = req.body;
+        const { prompt, sessionId } = req.body;
         if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
         console.log("🚀 Relay → reenviando prompt al modelo local...");
 
-        const data = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
+        // Configuramos SSE
+        res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+        });
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+        const response = await fetch(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt, sessionId }),
+            signal: controller.signal,
         });
 
-        // 🔹 Enviar a n8n (sin bloquear la respuesta del chat)
-        if (nombre && apellido && email && asunto) {
-            (async () => {
-                try {
-                    await fetch(N8N_WEBHOOK_URL, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ nombre, apellido, email, asunto }),
-                    });
-                    console.log("📡 Datos enviados a n8n");
-                } catch (err) {
-                    console.warn("⚠️ Error enviando a n8n:", err.message);
-                }
-            })();
+        clearTimeout(timeoutId);
+
+        if (!response.body) throw new Error("No hay body del modelo local");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            let chunk = decoder.decode(value);
+            chunk = chunk.replace(/^data:\s*/g, "").trim();
+            if (!chunk || chunk === "[FIN]") continue;
+
+            // Enviamos cada chunk al frontend como SSE
+            res.write(`data: ${chunk}\n\n`);
         }
 
-        // Devuelve siempre JSON correcto
-        res.type("application/json").send(data);
+        // Indicamos fin del stream
+        res.write("data: [FIN]\n\n");
+        res.end();
+
     } catch (err) {
         console.error("❌ Error en relay:", err);
-        res.status(500).json({
-            error: "Error comunicando con el modelo local.",
-            details: err.message,
-        });
+        res.write(`data: ❌ Error comunicando con el modelo local: ${err.message}\n\n`);
+        res.end();
     }
 });
 
