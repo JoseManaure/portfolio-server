@@ -12,9 +12,9 @@ import fetch from "node-fetch";
 const app = express();
 app.use(express.json());
 
-// ===============================
+// ============================
 // 🔧 CORS
-// ===============================
+// ============================
 const allowedOrigins = [
     "https://pfweb-nu.vercel.app",
     "http://localhost:3000",
