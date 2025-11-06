@@ -6,49 +6,60 @@ import cors from "cors";
 import { spawn } from "child_process";
 import mongoose from "mongoose";
 import { notifyN8n } from "./utils/notifyN8n.js";
+import dotenv from "dotenv";
+dotenv.config();
 
 // ===============================
-// 🌍 Variables de entorno manuales (ajústalas si cambian los túneles)
+// 🌍 Variables de entorno dinámicas
 // ===============================
-process.env.PUBLIC_BACKEND_URL = "https://sour-pandas-lie.loca.lt";
-process.env.N8N_WEBHOOK_URL = "https://21064a753e80.ngrok-free.app/webhook/chat";
+// Estas cambian según si estás en local o producción
+const isProd = process.env.NODE_ENV === "production";
+
+const PUBLIC_BACKEND_URL = isProd
+  ? "https://pfweb-nu.vercel.app" // tu front en producción
+  : "http://localhost:4001"; // backend local
+
+const N8N_WEBHOOK_URL = isProd
+  ? process.env.N8N_WEBHOOK_URL_PROD
+  : process.env.N8N_WEBHOOK_URL_LOCAL;
+
+process.env.PUBLIC_BACKEND_URL = PUBLIC_BACKEND_URL;
+process.env.N8N_WEBHOOK_URL = N8N_WEBHOOK_URL;
 
 // ===============================
 // ⚙️ Configuración inicial
 // ===============================
 const app = express();
+
 // ======================================
-// 🔧 Configurar CORS de forma robusta
+// 🔧 Configurar CORS flexible
 // ======================================
 const allowedOrigins = [
   "http://localhost:3000",
   "https://pfweb-nu.vercel.app",
+  "https://*.loca.lt", // permite túneles loca.lt
 ];
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
+  if (allowedOrigins.some((allowed) => origin?.includes(allowed.replace("*.", "")))) {
     res.header("Access-Control-Allow-Origin", origin);
   }
   res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200); // ✅ responde correctamente al preflight
-  }
-
+  if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
 
 app.use(express.json());
 
-
-const PORT = process.env.PORT || 4000;
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/chatdb";
-
 // ===============================
 // 📦 Conexión MongoDB
 // ===============================
+const MONGO_URI =
+  process.env.MONGO_URI || "mongodb://localhost:27017/chatdb";
+
 mongoose
   .connect(MONGO_URI)
   .then(() => console.log("✅ Conectado a MongoDB"))
@@ -105,19 +116,17 @@ function getSmartAnswer(userMessage) {
   return bestScore > 0.3 ? bestAnswer : null;
 }
 
-
-
 // ===============================
 // 🔹 Contexto personalizado
 // ===============================
 const personalContext = `
-Eres un asistente IA. Responde siempre en español, con espacios correctos, puntuación y formato legible.
-El usuario es José Manaure, desarrollador full stack con experiencia en React, Node.js y MongoDB, experto en UI/UX y testing de aplicaciones.
-Siempre que respondas, da ejemplos o información sobre José y sus proyectos.
+Eres un asistente IA. Responde siempre en español, con formato limpio y natural.
+El usuario es José Manaure, desarrollador full stack experto en React, Node.js, UI/UX y testing.
+Incluye ejemplos de su experiencia y proyectos.
 `;
 
 // ===============================
-// ⚙️ Configuración del modelo local
+// ⚙️ Modelo local llama.cpp
 // ===============================
 const LLAMA_BINARY = "/Users/jnanaure87/Desktop/portafolio-senior/myGpt/backend/llama.cpp/build/bin/llama-cli";
 const MODEL_PATH = "/Users/jnanaure87/Desktop/portafolio-senior/myGpt/backend/models/mistral-7b-instruct-v0.2.Q4_0.gguf";
@@ -125,7 +134,7 @@ const MODEL_PATH = "/Users/jnanaure87/Desktop/portafolio-senior/myGpt/backend/mo
 // ===============================
 // 🔹 Flujo de contacto automático
 // ===============================
-const contactSessions = new Map(); // key: sessionId
+const contactSessions = new Map();
 const contactFields = ["nombre", "apellido", "email", "asunto"];
 const contactQuestions = {
   nombre: "¿Cuál es tu nombre?",
@@ -135,7 +144,7 @@ const contactQuestions = {
 };
 
 // ===============================
-// 🔹 Endpoint chat
+// 🔹 Endpoint /api/chat
 // ===============================
 app.post("/api/chat", async (req, res) => {
   const { prompt, sessionId } = req.body;
@@ -143,63 +152,105 @@ app.post("/api/chat", async (req, res) => {
 
   console.log("🟢 POST /api/chat:", prompt);
 
-  const normalizedMessage = prompt.toLowerCase().trim();
+  const normalized = prompt.toLowerCase().trim();
   const triggerKeywords = ["contratar", "servicio", "precio", "presupuesto", "trabajar contigo", "cotización"];
-  const shouldTriggerWebhook = triggerKeywords.some(kw => normalizedMessage.includes(kw));
+  const shouldTriggerWebhook = triggerKeywords.some(kw => normalized.includes(kw));
 
   let session = contactSessions.get(sessionId);
 
-  // Iniciar flujo de contacto automáticamente
   if (shouldTriggerWebhook && !session) {
     session = { currentField: 0, data: {} };
     contactSessions.set(sessionId, session);
     return res.json({ reply: contactQuestions[contactFields[0]], source: "formulario-contacto" });
   }
 
-  // Guardar respuestas de contacto
   if (session) {
     const field = contactFields[session.currentField];
     session.data[field] = prompt;
-    session.currentField += 1;
+    session.currentField++;
 
     if (session.currentField < contactFields.length) {
       contactSessions.set(sessionId, session);
       return res.json({ reply: contactQuestions[contactFields[session.currentField]], source: "formulario-contacto" });
     } else {
-      // Todos los datos completos → enviar a Telegram / n8n
-      const finalMessage = session.data;
-
       try {
-        const telegramMessage = `📩 Nuevo contacto desde el chat:
-Nombre: ${finalMessage.nombre}
-Apellido: ${finalMessage.apellido}
-Email: ${finalMessage.email}
-Asunto: ${finalMessage.asunto}
-Mensaje usuario: ${prompt}`;
+        const msg = session.data;
+        const telegramMessage = `📩 Nuevo contacto:
+Nombre: ${msg.nombre}
+Apellido: ${msg.apellido}
+Email: ${msg.email}
+Asunto: ${msg.asunto}`;
 
         await notifyN8n(telegramMessage, "Formulario completado");
-        console.log("📡 Datos enviados a Telegram:", finalMessage);
+        console.log("📡 Datos enviados a Telegram:", msg);
       } catch (err) {
         console.error("❌ Error enviando a Telegram:", err);
       }
 
       contactSessions.delete(sessionId);
-
-      await Chat.create({
-        prompt,
-        reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.",
-        source: "formulario-completo",
-      });
+      await Chat.create({ prompt, reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.", source: "formulario-completo" });
 
       return res.json({ reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.", source: "formulario-completo" });
     }
   }
 
-  // Diccionario local
   const localAnswer = getSmartAnswer(prompt);
   if (localAnswer) return res.json({ reply: localAnswer, source: "dictionary" });
 
-  // Streaming SSE con llama.cpp
+  // 🔹 SSE con llama.cpp
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+
+  const formattedPrompt = `${personalContext}\nUsuario: ${prompt}\nAsistente:`;
+  const child = spawn(LLAMA_BINARY, [
+    "--model", MODEL_PATH,
+    "--prompt", formattedPrompt,
+    "--n-predict", "200",
+    "--threads", "4",
+  ]);
+
+  let fullResponse = "";
+  child.stdout.on("data", (data) => {
+    const chunk = data.toString();
+    fullResponse += chunk;
+    res.write(`data: ${chunk}\n\n`);
+  });
+
+  child.stderr.on("data", (err) => console.error("⚠️ llama stderr:", err.toString()));
+
+  child.on("close", async () => {
+    await Chat.create({ prompt, reply: fullResponse.trim(), source: "llama-local" });
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  });
+});
+
+// ===============================
+// 🔹 Endpoint SSE (streaming)
+// ===============================
+app.get("/api/chat-sse", async (req, res) => {
+  const { prompt, sessionId } = req.query;
+  if (!prompt) return res.status(400).json({ error: "Falta prompt" });
+
+  console.log("📡 SSE conectado:", prompt);
+
+  // Diccionario local
+  const localAnswer = getSmartAnswer(prompt);
+  if (localAnswer) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(`data: ${localAnswer}\n\n`);
+    res.write(`data: [FIN]\n\n`);
+    return res.end();
+  }
+
+  // Streaming desde llama.cpp
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -217,8 +268,8 @@ Mensaje usuario: ${prompt}`;
   let fullResponse = "";
 
   child.stdout.on("data", (data) => {
-    const chunk = data.toString() + " ";
-    fullResponse += chunk;
+    const chunk = data.toString().trim();
+    fullResponse += chunk + " ";
     res.write(`data: ${chunk}\n\n`);
   });
 
@@ -226,44 +277,36 @@ Mensaje usuario: ${prompt}`;
 
   child.on("close", async () => {
     fullResponse = fullResponse.trim();
-    await Chat.create({ prompt, reply: fullResponse, source: "llama-local" });
-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    await Chat.create({ prompt, reply: fullResponse, source: "llama-sse" });
+    res.write(`data: [FIN]\n\n`);
     res.end();
   });
 });
 
 // ===============================
-// 🔹 Endpoint para historial de chats
+// 🔹 Historial de chat
 // ===============================
 app.get("/api/history", async (req, res) => {
   try {
-    const { sessionId } = req.query;
-
-    let query = {};
-    if (sessionId) {
-      query = { sessionId }; // Filtra por sessionId si lo proporcionan
-    }
-
-    const chats = await Chat.find(query).sort({ createdAt: -1 }).lean();
-
+    const chats = await Chat.find().sort({ createdAt: -1 }).lean();
     res.status(200).json({ chats });
   } catch (err) {
-    console.error("❌ Error fetching chat history:", err);
+    console.error("❌ Error al obtener historial:", err);
     res.status(500).json({ error: "Error fetching chat history" });
   }
 });
 
-
 // ===============================
-// 🩵 Endpoint base
+// 🩵 Base
 // ===============================
 app.get("/", (req, res) => {
-  res.send("✅ Servidor de José Manaure activo con modelo local Mistral y MongoDB.");
+  res.send("✅ Servidor de José Manaure activo en modo " + (isProd ? "PRODUCCIÓN" : "LOCAL"));
 });
 
 // ===============================
-// 🚀 Arranque del servidor
+// 🚀 Arranque
 // ===============================
+const PORT = process.env.PORT || 4001;
 app.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`✅ Servidor corriendo en ${PUBLIC_BACKEND_URL}`);
 });
