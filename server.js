@@ -120,10 +120,12 @@ function getSmartAnswer(userMessage) {
 // 🔹 Contexto personalizado
 // ===============================
 const personalContext = `
-Eres un asistente IA. Responde siempre en español, con formato limpio y natural.
+Eres un asistente de inteligencia artificial.
+Responde SIEMPRE en español neutro, claro y natural, sin usar palabras en inglés.
 El usuario es José Manaure, desarrollador full stack experto en React, Node.js, UI/UX y testing.
-Incluye ejemplos de su experiencia y proyectos.
+Menciona ejemplos de su experiencia y proyectos, pero evita traducir o escribir frases en inglés.
 `;
+
 
 // ===============================
 // ⚙️ Modelo local llama.cpp
@@ -142,6 +144,26 @@ const contactQuestions = {
   email: "¿Cuál es tu email?",
   asunto: "¿Cuál es el asunto o mensaje que quieres dejarme?",
 };
+
+// ===============================
+// 🧹 Función para limpiar texto SSE
+// ===============================
+function cleanText(chunk) {
+  return chunk
+    // Elimina etiquetas o restos del prompt
+    .replace(/^\[INST\][\s\S]*?\> /, "")
+    // Une fragmentos cortados de palabras (Man a ure → Manaure)
+    .replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ])\s+([a-záéíóúñ])/g, "$1$2")
+    // Corrige múltiples espacios
+    .replace(/\s{2,}/g, " ")
+    // Asegura espacio después de comas y puntos
+    .replace(/([.,!?])(?=[^\s])/g, "$1 ")
+    // Limpia caracteres raros
+    .replace(/[^\x20-\x7EáéíóúÁÉÍÓÚñÑüÜ¡¿]/g, "")
+    // Quita espacios iniciales y finales
+    .trim();
+}
+
 
 // ===============================
 // 🔹 Endpoint /api/chat
@@ -204,28 +226,47 @@ Asunto: ${msg.asunto}`;
     Connection: "keep-alive",
   });
 
-  const formattedPrompt = `${personalContext}\nUsuario: ${prompt}\nAsistente:`;
+  const formattedPrompt = `[INST] ${personalContext.trim()} \nUsuario: ${prompt} \nResponde solo en español. [/INST]`;
   const child = spawn(LLAMA_BINARY, [
     "--model", MODEL_PATH,
     "--prompt", formattedPrompt,
-    "--n-predict", "200",
+    "--n-predict", "30",
     "--threads", "4",
   ]);
+  let buffer = "";
+  let responseStarted = false;
 
-  let fullResponse = "";
   child.stdout.on("data", (data) => {
-    const chunk = data.toString();
-    fullResponse += chunk;
-    res.write(`data: ${chunk}\n\n`);
-  });
+    buffer += data.toString();
 
-  child.stderr.on("data", (err) => console.error("⚠️ llama stderr:", err.toString()));
+    // Detectar inicio real del texto
+    if (!responseStarted && buffer.includes("[/INST]")) {
+      buffer = buffer.split("[/INST]")[1] || "";
+      responseStarted = true;
+    }
+
+    if (responseStarted) {
+      // Procesar en bloques cada 50 caracteres (mejor coherencia)
+      if (buffer.length > 50) {
+        const cleaned = cleanText(buffer);
+        res.write(`data: ${cleaned}\n\n`);
+        fullResponse += cleaned + " ";
+        buffer = "";
+      }
+    }
+  });
 
   child.on("close", async () => {
+    if (buffer.trim()) {
+      const cleaned = cleanText(buffer);
+      res.write(`data: ${cleaned}\n\n`);
+      fullResponse += cleaned + " ";
+    }
     await Chat.create({ prompt, reply: fullResponse.trim(), source: "llama-local" });
-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.write(`data: [FIN]\n\n`);
     res.end();
   });
+
 });
 
 // ===============================
@@ -267,10 +308,25 @@ app.get("/api/chat-sse", async (req, res) => {
 
   let fullResponse = "";
 
+  let responseStarted = false;
+  let buffer = "";
+
   child.stdout.on("data", (data) => {
-    const chunk = data.toString().trim();
-    fullResponse += chunk + " ";
-    res.write(`data: ${chunk}\n\n`);
+    buffer += data.toString();
+
+    // Solo procesamos cuando ya tenemos algo de contenido
+    if (!responseStarted && buffer.includes("[/INST]")) {
+      // Cortamos hasta después de [/INST]
+      buffer = buffer.split("[/INST]")[1] || "";
+      responseStarted = true;
+    }
+
+    if (responseStarted) {
+      const cleaned = cleanText(buffer);
+      buffer = ""; // limpiamos para acumular lo siguiente
+      fullResponse += cleaned + " ";
+      res.write(`data: ${cleaned}\n\n`);
+    }
   });
 
   child.stderr.on("data", (err) => console.error("⚠️ llama stderr:", err.toString()));
