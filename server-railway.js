@@ -65,55 +65,72 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
 
 // ===============================
 // 🧠 Endpoint SSE al modelo local
+// ===============================
+// 🧠 Endpoint SSE universal
+// ===============================
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
+    // Headers SSE
     res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
     });
 
+    const isLocal = process.env.NODE_ENV !== "production";
+
     try {
-        const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, sessionId }),
-        });
+        // 🔹 En local: usamos el modelo local (loca.lt o puerto)
+        if (isLocal) {
+            console.log("💻 Usando modelo local:", LOCAL_MODEL_URL);
 
-        if (!response.body) throw new Error("No hay body del modelo local");
+            const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt, sessionId }),
+            });
 
-        const decoder = new TextDecoder();
-        for await (const chunk of response.body) {
-            let textChunk = decoder.decode(chunk);
-            textChunk = textChunk.replace(/^data:\s*/g, "").trim();
-            if (!textChunk || textChunk === "[FIN]") continue;
-            res.write(`data: ${textChunk}\n\n`);
+            if (!response.body) throw new Error("No hay body del modelo local");
+
+            const decoder = new TextDecoder();
+            for await (const chunk of response.body) {
+                let textChunk = decoder.decode(chunk);
+                textChunk = textChunk.replace(/^data:\s*/g, "").trim();
+                if (!textChunk || textChunk === "[FIN]") continue;
+                res.write(`data: ${textChunk}\n\n`);
+            }
+
+            res.write("data: [FIN]\n\n");
+            res.end();
         }
-
-
-        res.write("data: [FIN]\n\n");
-        res.end();
-
-        // 🔹 Enviar también a n8n
-        try {
+        // 🔹 En producción: redirigimos a n8n
+        else {
+            console.log("🌐 Producción: enviando prompt a n8n");
             await fetchWithRetry(N8N_WEBHOOK_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ prompt, sessionId }),
             });
-            console.log("📡 Datos enviados a n8n");
-        } catch (err) {
-            console.error("❌ Error enviando a n8n:", err.message);
+
+            res.write(`data: 📡 Prompt recibido: ${prompt}\n\n`);
+            res.write(`data: Procesado por n8n\n\n`);
+            res.write("data: [FIN]\n\n");
+            res.end();
         }
 
     } catch (err) {
-        console.error("❌ Error SSE:", err);
+        console.error("❌ Error SSE:", err.message);
         res.write(`data: ❌ Error: ${err.message}\n\n`);
         res.end();
     }
+
+    // 🔹 Heartbeat SSE para mantener viva la conexión
+    const interval = setInterval(() => res.write("data: 💓\n\n"), 15000);
+    req.on("close", () => clearInterval(interval));
 });
+
 
 // ===============================
 // 🔹 Historial de chat
