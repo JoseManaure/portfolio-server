@@ -39,7 +39,7 @@ if (MONGO_URI) {
 
 // ===============================
 // 🌐 URLs
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://neat-lines-fry.loca.lt";
+const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://seven-apples-draw.loca.lt";
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://f8e85894b3ed.ngrok-free.app/webhook/chat";
 
 // ===============================
@@ -63,57 +63,19 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
     }
 }
 
-
 // ===============================
-// 🧠 Endpoint SSE que conecta al modelo local o a n8n según prompt
-// ===============================
+// 🧠 Endpoint SSE al modelo local
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
-    // --- SSE Headers ---
     res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
     });
 
-    // --- Heartbeat para evitar timeout ---
-    const heartbeat = setInterval(() => res.write("data: 💓\n\n"), 15000);
-    req.on("close", () => clearInterval(heartbeat));
-
     try {
-        const normalized = prompt.toLowerCase().trim();
-        const triggerKeywords = [
-            "contratar",
-            "servicio",
-            "precio",
-            "presupuesto",
-            "trabajar contigo",
-            "cotización",
-        ];
-
-        const shouldTriggerWebhook = triggerKeywords.some((kw) =>
-            normalized.includes(kw)
-        );
-
-        // 🔹 Si es un caso de contacto → n8n
-        if (shouldTriggerWebhook) {
-            console.log("📨 Enviando a n8n por palabra clave:", prompt);
-            await fetchWithRetry(N8N_WEBHOOK_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt, sessionId }),
-            });
-            res.write(`data: 📩 Gracias, tu mensaje ha sido enviado.\n\n`);
-            res.write(`data: [FIN]\n\n`);
-            res.end();
-            return;
-        }
-
-        // 🔹 Caso normal → llama.cpp local (vía túnel)
-        console.log("🧠 Conectando con modelo local en:", LOCAL_MODEL_URL);
-
         const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -130,16 +92,28 @@ app.get("/api/chat-sse", async (req, res) => {
             res.write(`data: ${textChunk}\n\n`);
         }
 
+
         res.write("data: [FIN]\n\n");
         res.end();
+
+        // 🔹 Enviar también a n8n
+        try {
+            await fetchWithRetry(N8N_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt, sessionId }),
+            });
+            console.log("📡 Datos enviados a n8n");
+        } catch (err) {
+            console.error("❌ Error enviando a n8n:", err.message);
+        }
+
     } catch (err) {
         console.error("❌ Error SSE:", err);
         res.write(`data: ❌ Error: ${err.message}\n\n`);
         res.end();
     }
 });
-
-
 
 // ===============================
 // 🔹 Historial de chat
