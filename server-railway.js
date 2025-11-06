@@ -63,73 +63,82 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
     }
 }
 
+
 // ===============================
-// 🧠 Endpoint SSE al modelo local
-// ===============================
-// 🧠 Endpoint SSE universal
+// 🧠 Endpoint SSE que conecta al modelo local o a n8n según prompt
 // ===============================
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
-    // Headers SSE
+    // --- SSE Headers ---
     res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
     });
 
-    const isLocal = process.env.NODE_ENV !== "production";
+    // --- Heartbeat para evitar timeout ---
+    const heartbeat = setInterval(() => res.write("data: 💓\n\n"), 15000);
+    req.on("close", () => clearInterval(heartbeat));
 
     try {
-        // 🔹 En local: usamos el modelo local (loca.lt o puerto)
-        if (isLocal) {
-            console.log("💻 Usando modelo local:", LOCAL_MODEL_URL);
+        const normalized = prompt.toLowerCase().trim();
+        const triggerKeywords = [
+            "contratar",
+            "servicio",
+            "precio",
+            "presupuesto",
+            "trabajar contigo",
+            "cotización",
+        ];
 
-            const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt, sessionId }),
-            });
+        const shouldTriggerWebhook = triggerKeywords.some((kw) =>
+            normalized.includes(kw)
+        );
 
-            if (!response.body) throw new Error("No hay body del modelo local");
-
-            const decoder = new TextDecoder();
-            for await (const chunk of response.body) {
-                let textChunk = decoder.decode(chunk);
-                textChunk = textChunk.replace(/^data:\s*/g, "").trim();
-                if (!textChunk || textChunk === "[FIN]") continue;
-                res.write(`data: ${textChunk}\n\n`);
-            }
-
-            res.write("data: [FIN]\n\n");
-            res.end();
-        }
-        // 🔹 En producción: redirigimos a n8n
-        else {
-            console.log("🌐 Producción: enviando prompt a n8n");
+        // 🔹 Si es un caso de contacto → n8n
+        if (shouldTriggerWebhook) {
+            console.log("📨 Enviando a n8n por palabra clave:", prompt);
             await fetchWithRetry(N8N_WEBHOOK_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ prompt, sessionId }),
             });
-
-            res.write(`data: 📡 Prompt recibido: ${prompt}\n\n`);
-            res.write(`data: Procesado por n8n\n\n`);
-            res.write("data: [FIN]\n\n");
+            res.write(`data: 📩 Gracias, tu mensaje ha sido enviado.\n\n`);
+            res.write(`data: [FIN]\n\n`);
             res.end();
+            return;
         }
 
+        // 🔹 Caso normal → llama.cpp local (vía túnel)
+        console.log("🧠 Conectando con modelo local en:", LOCAL_MODEL_URL);
+
+        const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, sessionId }),
+        });
+
+        if (!response.body) throw new Error("No hay body del modelo local");
+
+        const decoder = new TextDecoder();
+        for await (const chunk of response.body) {
+            let textChunk = decoder.decode(chunk);
+            textChunk = textChunk.replace(/^data:\s*/g, "").trim();
+            if (!textChunk || textChunk === "[FIN]") continue;
+            res.write(`data: ${textChunk}\n\n`);
+        }
+
+        res.write("data: [FIN]\n\n");
+        res.end();
     } catch (err) {
-        console.error("❌ Error SSE:", err.message);
+        console.error("❌ Error SSE:", err);
         res.write(`data: ❌ Error: ${err.message}\n\n`);
         res.end();
     }
-
-    // 🔹 Heartbeat SSE para mantener viva la conexión
-    const interval = setInterval(() => res.write("data: 💓\n\n"), 15000);
-    req.on("close", () => clearInterval(interval));
 });
+
 
 
 // ===============================
