@@ -38,7 +38,7 @@ if (MONGO_URI) {
 
 // ===============================
 // 🌐 URLs
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://every-wasps-write.loca.lt";
+const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://ready-sloths-drop.loca.lt/api/chat";
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://a430c7531532.ngrok-free.app/webhook/chat";
 
 // ===============================
@@ -61,9 +61,9 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
         }
     }
 }
-
 // ===============================
-// 🧠 Endpoint SSE al modelo local
+// 🧠 Endpoint SSE al modelo local (versión robusta)
+// ===============================
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
@@ -74,7 +74,12 @@ app.get("/api/chat-sse", async (req, res) => {
         Connection: "keep-alive",
     });
 
+    console.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
+
     try {
+        // =============================
+        // 1️⃣ Conectar al modelo local
+        // =============================
         const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -91,28 +96,41 @@ app.get("/api/chat-sse", async (req, res) => {
             res.write(`data: ${textChunk}\n\n`);
         }
 
-
+        // Fin del stream
         res.write("data: [FIN]\n\n");
         res.end();
 
-        // 🔹 Enviar también a n8n
-        try {
-            await fetchWithRetry(N8N_WEBHOOK_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt, sessionId }),
-            });
-            console.log("📡 Datos enviados a n8n");
-        } catch (err) {
-            console.error("❌ Error enviando a n8n:", err.message);
-        }
+        // =============================
+        // 2️⃣ Enviar también a n8n (no bloqueante)
+        // =============================
+        fetchWithRetry(N8N_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, sessionId }),
+        })
+            .then(() => console.log("📡 Datos enviados a n8n"))
+            .catch((err) => console.warn("❌ Error enviando a n8n:", err.message));
 
     } catch (err) {
-        console.error("❌ Error SSE:", err);
-        res.write(`data: ❌ Error: ${err.message}\n\n`);
+        // =============================
+        // 🚨 Error (modelo inaccesible o timeout)
+        // =============================
+        console.error("❌ Error SSE:", err.message);
+
+        // Enviar un mensaje visible al frontend
+        res.write(`data: ⚠️ Error al conectar con el modelo local.\n\n`);
+        res.write(`data: Detalle técnico: ${err.message}\n\n`);
+        res.write(`data: [FIN]\n\n`);
         res.end();
+
+        // Log más claro para Railway
+        if (err.message.includes("Tunnel Unavailable"))
+            console.warn("🔌 El túnel LOCAL_MODEL_URL (loca.lt) ya no está disponible.");
+        else if (err.name === "AbortError")
+            console.warn("⏱️ Conexión abortada (timeout alcanzado).");
     }
 });
+
 
 // ===============================
 // 🔹 Historial de chat
