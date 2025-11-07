@@ -43,7 +43,7 @@ const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://a430c7531532.ngr
 
 // ===============================
 // 🧠 Función fetch con reintentos
-async function fetchWithRetry(url, options = {}, retries = 3, timeout = 30000) {
+async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const controller = new AbortController();
