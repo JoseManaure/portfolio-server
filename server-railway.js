@@ -38,7 +38,7 @@ if (MONGO_URI) {
 
 // ===============================
 // 🌐 URLs
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://plenty-jokes-beam.loca.lt";
+const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://sixty-geese-sneeze.loca.lt";
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://f8e85894b3ed.ngrok-free.app/webhook/chat";
 
 // ===============================
