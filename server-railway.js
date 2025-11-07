@@ -60,9 +60,8 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
             if (attempt === retries) throw err;
         }
     }
-}
-// ===============================
-// 🧠 Endpoint SSE al modelo local (versión robusta)
+}// ===============================
+// 🧠 Endpoint SSE al modelo local (versión mejorada con limpieza de texto)
 // ===============================
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
@@ -77,9 +76,7 @@ app.get("/api/chat-sse", async (req, res) => {
     console.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
 
     try {
-        // =============================
         // 1️⃣ Conectar al modelo local
-        // =============================
         const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -89,20 +86,36 @@ app.get("/api/chat-sse", async (req, res) => {
         if (!response.body) throw new Error("No hay body del modelo local");
 
         const decoder = new TextDecoder();
+        let buffer = "";
+
         for await (const chunk of response.body) {
-            let textChunk = decoder.decode(chunk);
+            let textChunk = decoder.decode(chunk, { stream: true });
             textChunk = textChunk.replace(/^data:\s*/g, "").trim();
+
             if (!textChunk || textChunk === "[FIN]") continue;
+
+            // 🧹 Limpieza y normalización del texto
+            textChunk = textChunk
+                .replace(/\[INST\][\s\S]*?\]/g, "") // elimina tokens tipo [INST]
+                .replace(/\s{2,}/g, " ")            // colapsa espacios dobles
+                .replace(/([.,!?])(?=[^\s])/g, "$1 ") // agrega espacio tras signos
+                .replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2") // separa camelcase
+                .replace(/([a-z])([A-Z])/g, "$1 $2")
+                .replace(/[^\x20-\x7EáéíóúÁÉÍÓÚñÑüÜ¡¿]/g, "") // limpia caracteres extraños
+                .trim();
+
+            // 🔠 Si se detecta palabra pegada (sin espacio entre final y siguiente)
+            const needsSpace = buffer && !buffer.endsWith(" ") && !textChunk.startsWith(" ");
+            buffer += (needsSpace ? " " : "") + textChunk;
+
+            // 🧩 Enviar chunk limpio al cliente
             res.write(`data: ${textChunk}\n\n`);
         }
 
-        // Fin del stream
         res.write("data: [FIN]\n\n");
         res.end();
 
-        // =============================
-        // 2️⃣ Enviar también a n8n (no bloqueante)
-        // =============================
+        // 2️⃣ Enviar también a n8n
         fetchWithRetry(N8N_WEBHOOK_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -112,18 +125,12 @@ app.get("/api/chat-sse", async (req, res) => {
             .catch((err) => console.warn("❌ Error enviando a n8n:", err.message));
 
     } catch (err) {
-        // =============================
-        // 🚨 Error (modelo inaccesible o timeout)
-        // =============================
         console.error("❌ Error SSE:", err.message);
-
-        // Enviar un mensaje visible al frontend
         res.write(`data: ⚠️ Error al conectar con el modelo local.\n\n`);
         res.write(`data: Detalle técnico: ${err.message}\n\n`);
         res.write(`data: [FIN]\n\n`);
         res.end();
 
-        // Log más claro para Railway
         if (err.message.includes("Tunnel Unavailable"))
             console.warn("🔌 El túnel LOCAL_MODEL_URL (loca.lt) ya no está disponible.");
         else if (err.name === "AbortError")
