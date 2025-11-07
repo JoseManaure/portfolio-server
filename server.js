@@ -233,6 +233,7 @@ Asunto: ${msg.asunto}`;
     "--n-predict", "30",
     "--threads", "4",
   ]);
+  let fullResponse = "";
   let buffer = "";
   let responseStarted = false;
 
