@@ -60,8 +60,10 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
             if (attempt === retries) throw err;
         }
     }
-}// ===============================
-// 🧠 Endpoint SSE al modelo local (versión mejorada con limpieza de texto)
+}
+
+// ===============================
+// 🧠 Endpoint SSE al modelo local (con limpieza y trigger n8n)
 // ===============================
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
@@ -75,6 +77,9 @@ app.get("/api/chat-sse", async (req, res) => {
 
     console.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
 
+    // 🧩 Palabras clave para activar n8n
+    const triggerWords = ["contratar", "contactar", "telegram", "mensaje"];
+
     try {
         // 1️⃣ Conectar al modelo local
         const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
@@ -86,43 +91,60 @@ app.get("/api/chat-sse", async (req, res) => {
         if (!response.body) throw new Error("No hay body del modelo local");
 
         const decoder = new TextDecoder();
+        let partialText = ""; // para detectar palabras cortadas
         let buffer = "";
 
         for await (const chunk of response.body) {
             let textChunk = decoder.decode(chunk, { stream: true });
-            textChunk = textChunk.replace(/^data:\s*/g, "").trim();
+            textChunk = textChunk.replace(/^data:\s*/g, "");
 
-            if (!textChunk || textChunk === "[FIN]") continue;
+            // 🔹 Acumula por si vienen fragmentos partidos
+            partialText += textChunk;
 
-            // 🧹 Limpieza y normalización del texto
-            textChunk = textChunk
-                .replace(/\[INST\][\s\S]*?\]/g, "") // elimina tokens tipo [INST]
-                .replace(/\s{2,}/g, " ")            // colapsa espacios dobles
-                .replace(/([.,!?])(?=[^\s])/g, "$1 ") // agrega espacio tras signos
-                .replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2") // separa camelcase
-                .replace(/([a-z])([A-Z])/g, "$1 $2")
-                .replace(/[^\x20-\x7EáéíóúÁÉÍÓÚñÑüÜ¡¿]/g, "") // limpia caracteres extraños
-                .trim();
+            // Procesa por líneas completas
+            const lines = partialText.split(/\r?\n/);
+            partialText = lines.pop() || ""; // guarda el sobrante no terminado
 
-            // 🔠 Si se detecta palabra pegada (sin espacio entre final y siguiente)
-            const needsSpace = buffer && !buffer.endsWith(" ") && !textChunk.startsWith(" ");
-            buffer += (needsSpace ? " " : "") + textChunk;
+            for (let line of lines) {
+                line = line.trim();
+                if (!line || line === "[FIN]") continue;
 
-            // 🧩 Enviar chunk limpio al cliente
-            res.write(`data: ${textChunk}\n\n`);
+                // 🧹 Limpieza avanzada
+                line = line
+                    .replace(/\[INST\][\s\S]*?\]/g, "")
+                    .replace(/\s{2,}/g, " ")
+                    .replace(/([.,!?])(?=[^\s])/g, "$1 ")
+                    .replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2")
+                    .replace(/([a-z])([A-Z])/g, "$1 $2")
+                    .replace(/[^\x20-\x7EáéíóúÁÉÍÓÚñÑüÜ¡¿.,!?]/g, "")
+                    .trim();
+
+                // Si el último carácter del buffer y el primero del nuevo no tienen espacio, agrégalo
+                const needsSpace = buffer && !buffer.endsWith(" ") && !line.startsWith(" ");
+                buffer += (needsSpace ? " " : "") + line;
+
+                res.write(`data: ${line}\n\n`);
+            }
+        }
+
+        if (partialText.trim()) {
+            res.write(`data: ${partialText.trim()}\n\n`);
         }
 
         res.write("data: [FIN]\n\n");
         res.end();
 
-        // 2️⃣ Enviar también a n8n
-        fetchWithRetry(N8N_WEBHOOK_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, sessionId }),
-        })
-            .then(() => console.log("📡 Datos enviados a n8n"))
-            .catch((err) => console.warn("❌ Error enviando a n8n:", err.message));
+        // 2️⃣ Enviar también a n8n si el prompt contiene alguna palabra clave
+        if (triggerWords.some(w => prompt.toLowerCase().includes(w))) {
+            console.log("🤖 Trigger n8n activado por palabra clave:", prompt);
+            fetchWithRetry(N8N_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt, sessionId }),
+            })
+                .then(() => console.log("📡 Datos enviados a n8n"))
+                .catch((err) => console.warn("❌ Error enviando a n8n:", err.message));
+        }
 
     } catch (err) {
         console.error("❌ Error SSE:", err.message);
@@ -137,6 +159,7 @@ app.get("/api/chat-sse", async (req, res) => {
             console.warn("⏱️ Conexión abortada (timeout alcanzado).");
     }
 });
+
 
 
 // ===============================
