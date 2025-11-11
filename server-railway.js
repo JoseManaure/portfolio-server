@@ -38,8 +38,8 @@ if (MONGO_URI) {
 
 // ===============================
 // 🌐 URLs
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://ready-sloths-drop.loca.lt/api/chat";
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://a430c7531532.ngrok-free.app/webhook/chat";
+const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "https://metal-brooms-enter.loca.lt/api/chat";
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://c39b9b66690c.ngrok-free.app/webhook/chat";
 
 // ===============================
 // 🧠 Función fetch con reintentos
