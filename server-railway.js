@@ -62,6 +62,116 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
     }
 }
 
+
+
+// ===============================
+// 🔹 Endpoint /api/chat
+// ===============================
+app.post("/api/chat", async (req, res) => {
+    const { prompt, sessionId } = req.body;
+    if (!prompt) return res.status(400).json({ error: "Falta prompt" });
+
+    console.log("🟢 POST /api/chat:", prompt);
+
+    const normalized = prompt.toLowerCase().trim();
+    const triggerKeywords = ["contratar", "servicio", "precio", "presupuesto", "trabajar contigo", "cotización"];
+    const shouldTriggerWebhook = triggerKeywords.some(kw => normalized.includes(kw));
+
+    let session = contactSessions.get(sessionId);
+
+    if (shouldTriggerWebhook && !session) {
+        session = { currentField: 0, data: {} };
+        contactSessions.set(sessionId, session);
+        return res.json({ reply: contactQuestions[contactFields[0]], source: "formulario-contacto" });
+    }
+
+    if (session) {
+        const field = contactFields[session.currentField];
+        session.data[field] = prompt;
+        session.currentField++;
+
+        if (session.currentField < contactFields.length) {
+            contactSessions.set(sessionId, session);
+            return res.json({ reply: contactQuestions[contactFields[session.currentField]], source: "formulario-contacto" });
+        } else {
+            try {
+                const msg = session.data;
+                const telegramMessage = `📩 Nuevo contacto:
+  Nombre: ${msg.nombre}
+  Apellido: ${msg.apellido}
+  Email: ${msg.email}
+  Asunto: ${msg.asunto}`;
+
+                await notifyN8n(telegramMessage, "Formulario completado");
+                console.log("📡 Datos enviados a Telegram:", msg);
+            } catch (err) {
+                console.error("❌ Error enviando a Telegram:", err);
+            }
+
+            contactSessions.delete(sessionId);
+            await Chat.create({ prompt, reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.", source: "formulario-completo" });
+
+            return res.json({ reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.", source: "formulario-completo" });
+        }
+    }
+
+    const localAnswer = getSmartAnswer(prompt);
+    if (localAnswer) return res.json({ reply: localAnswer, source: "dictionary" });
+
+    // 🔹 SSE con llama.cpp
+    res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+    });
+
+    const formattedPrompt = `[INST] ${personalContext.trim()} \nUsuario: ${prompt} \nResponde solo en español. [/INST]`;
+    const child = spawn(LLAMA_BINARY, [
+        "--model", MODEL_PATH,
+        "--prompt", formattedPrompt,
+        "--n-predict", "30",
+        "--threads", "4",
+    ]);
+    let fullResponse = "";
+    let buffer = "";
+    let responseStarted = false;
+
+    child.stdout.on("data", (data) => {
+        buffer += data.toString();
+
+        // Detectar inicio real del texto
+        if (!responseStarted && buffer.includes("[/INST]")) {
+            buffer = buffer.split("[/INST]")[1] || "";
+            responseStarted = true;
+        }
+
+        if (responseStarted) {
+            // Procesar en bloques cada 50 caracteres (mejor coherencia)
+            if (buffer.length > 50) {
+                const cleaned = cleanText(buffer);
+                res.write(`data: ${cleaned}\n\n`);
+                fullResponse += cleaned + " ";
+                buffer = "";
+            }
+        }
+    });
+
+    child.on("close", async () => {
+        if (buffer.trim()) {
+            const cleaned = cleanText(buffer);
+            res.write(`data: ${cleaned}\n\n`);
+            fullResponse += cleaned + " ";
+        }
+        await Chat.create({ prompt, reply: fullResponse.trim(), source: "llama-local" });
+        res.write(`data: [FIN]\n\n`);
+        res.end();
+    });
+
+});
+
+
+
+
 // ===============================
 // 🧠 Endpoint SSE al modelo local (con limpieza y trigger n8n)
 // ===============================
@@ -75,7 +185,9 @@ app.get("/api/chat-sse", async (req, res) => {
         Connection: "keep-alive",
     });
 
-    console.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
+
+
+    onsole.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
 
     // 🧩 Palabras clave para activar n8n
     const triggerWords = ["contratar", "contactar", "telegram", "mensaje"];
