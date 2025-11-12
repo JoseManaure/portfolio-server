@@ -166,6 +166,15 @@ function cleanText(chunk) {
 
 
 // ===============================
+// 🧹 Función para limpiar texto SSE
+// ===============================
+function getVisitor() {
+
+
+}
+
+
+// ===============================
 // 🔹 Endpoint /api/chat
 // ===============================
 app.post("/api/chat", async (req, res) => {
