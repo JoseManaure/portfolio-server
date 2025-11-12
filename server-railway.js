@@ -64,6 +64,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
 
 
 
+
 // ===============================
 // 🔹 Endpoint /api/chat
 // ===============================
@@ -170,12 +171,17 @@ app.post("/api/chat", async (req, res) => {
 });
 
 
-
+const corsOptions = {
+    origin: ["https://pfweb-nu.vercel.app", "http://localhost:3000"],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+};
 
 // ===============================
 // 🧠 Endpoint SSE al modelo local (con limpieza y trigger n8n)
 // ===============================
-app.get("/api/chat-sse", async (req, res) => {
+app.get("/api/chat-sse", cors(corsOptions), async (req, res) => {
     const { prompt, sessionId } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
