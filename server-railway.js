@@ -202,10 +202,14 @@ app.get("/api/chat-sse", cors(corsOptions), async (req, res) => {
 
     try {
         // 1️⃣ Conectar al modelo local
-        const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/api/chat`, {
+        const response = await fetchWithRetry(`${LOCAL_MODEL_URL}/completion`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, sessionId }),
+            body: JSON.stringify({
+                prompt,
+                stream: true,
+                n_predict: 200,  // ajusta si quieres más tokens
+            }),
         });
 
         if (!response.body) throw new Error("No hay body del modelo local");
