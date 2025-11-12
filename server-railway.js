@@ -4,6 +4,8 @@
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
+import { v4 as uuidv4 } from "uuid";
+import Visitor from "./models/Visitor.js";
 
 // ===============================
 // ⚙️ Configuración inicial
@@ -193,7 +195,7 @@ app.get("/api/chat-sse", cors(corsOptions), async (req, res) => {
 
 
 
-    onsole.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
+    console.log(`📡 SSE iniciado: prompt="${prompt}", session=${sessionId}`);
 
     // 🧩 Palabras clave para activar n8n
     const triggerWords = ["contratar", "contactar", "telegram", "mensaje"];
@@ -286,6 +288,32 @@ app.get("/api/history", (req, res) => {
     res.status(200).json({ message: "Historial deshabilitado en versión relay." });
 });
 
+
+app.post("/api/visitor", async (req, res) => {
+    try {
+        // Genera un nuevo ID para el visitante
+        const visitorId = uuidv4();
+
+        // Detecta IP y User-Agent (solo para info general)
+        const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+        const userAgent = req.headers["user-agent"];
+
+        // Guarda en MongoDB
+        const visitor = new Visitor({
+            visitorId,
+            ip,
+            userAgent,
+        });
+        await visitor.save();
+
+        console.log(`👤 Nuevo visitante: ${visitorId}`);
+
+        res.status(201).json({ success: true, visitorId });
+    } catch (err) {
+        console.error("❌ Error creando visitante:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 // ===============================
 // 🩵 Endpoint raíz
 app.get("/", (req, res) => {
