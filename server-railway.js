@@ -171,9 +171,16 @@ app.get("/api/chat-sse", async (req, res) => {
             // Enviar a n8n
             await fetch("https://flat-trains-sleep.loca.lt/webhook/chat", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt })
+                headers: {
+                    "Content-Type": "application/json",
+                    "Bypass-Tunnel-Reminder": "true" // necesario para loca.lt
+                },
+                body: JSON.stringify({
+                    text: prompt,
+                    sessionId // opcional, si quieres rastrear la sesión
+                })
             });
+
         } catch (error) {
             console.log("⚠️ Error enviando a n8n:", error.message);
         }
@@ -257,7 +264,7 @@ Debes responder SIEMPRE en español, de forma natural y profesional.
                         parsed.choices?.[0]?.delta?.content ||
                         "";
 
-                    if (token) res.write(`data: ${token}\n\n`);
+                    if (token) res.write("data: " + token + "\n\n");
                 } catch {
                     res.write(`data: ${line}\n\n`);
                 }
