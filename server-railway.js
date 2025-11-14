@@ -52,6 +52,12 @@ const LOCAL_MODEL_URL =
 // Modelo instalado en tu carpeta /models
 const MODEL_NAME = process.env.MODEL_NAME || "mistral-7b-instruct-v0.2.Q4_0.gguf";
 
+app.use((req, res, next) => {
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const ua = req.headers["user-agent"];
+    console.log(`📡 Nueva petición → IP: ${ip} | UA: ${ua} | Ruta: ${req.method} ${req.url}`);
+    next();
+});
 
 // ===============================
 // 🧠 fetch con reintentos
