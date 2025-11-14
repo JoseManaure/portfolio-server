@@ -151,6 +151,22 @@ app.get("/api/chat-sse", async (req, res) => {
     const { prompt } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
+    // 🔍 Detectar palabras de interés para activar n8n
+    const palabrasClave = ["contratar", "empleo", "trabajo", "trabajar", "hire", "job", "reclutar", "reclutador"];
+    const activarWebhook = palabrasClave.some(p => prompt.toLowerCase().includes(p));
+
+    // 🔵 Si activa webhook → enviar mensaje a n8n (NO bloquea SSE)
+    if (activarWebhook) {
+        fetch("https://cool-sheep-play.loca.lt/webhook/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                mensaje: prompt,
+                fecha: new Date().toISOString()
+            }),
+        }).catch(err => console.error("❌ Error enviando a n8n:", err.message));
+    }
+
     res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -158,12 +174,12 @@ app.get("/api/chat-sse", async (req, res) => {
     });
 
     const CONTEXTO_PERSONAL = `
-    Eres un asistente experto en desarrollo Full Stack.
-Tu usuario se llama Jose Manaure.
-Jose es desarrollador especializado en Next.js y NestJS.
-Su stack incluye React, Node.js, MongoDB y Tailwind.
-Debes responder SIEMPRE en español, de forma natural y profesional.
-`;
+        Eres un asistente experto en desarrollo Full Stack.
+        Tu usuario se llama Jose Manaure.
+        Jose es desarrollador especializado en Next.js y NestJS.
+        Su stack incluye React, Node.js, MongoDB y Tailwind.
+        Debes responder SIEMPRE en español, de forma natural y profesional.
+    `;
 
     try {
         const response = await fetchWithRetry(LOCAL_MODEL_URL, {
@@ -184,7 +200,6 @@ Debes responder SIEMPRE en español, de forma natural y profesional.
         const decoder = new TextDecoder();
         let buffer = "";
 
-        // Leer línea por línea
         for await (const chunk of response.body) {
             buffer += decoder.decode(chunk, { stream: true });
 
