@@ -157,7 +157,7 @@ app.get("/api/chat-sse", async (req, res) => {
 
     // 🔵 Si activa webhook → enviar mensaje a n8n (NO bloquea SSE)
     if (activarWebhook) {
-        fetch("https://cool-sheep-play.loca.lt/webhook/chat", {
+        fetch("https://flat-trains-sleep.loca.lt/webhook/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
