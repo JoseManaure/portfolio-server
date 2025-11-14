@@ -3,11 +3,11 @@ import cors from "cors";
 import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import fetch from "node-fetch";
-import Visitor from "./models/Visitor.js";
-import Chat from "./models/Chat.js"; // asumo que tenías este modelo
-import { spawn } from "child_process";
 import dotenv from "dotenv";
-dotenv.config()
+import Visitor from "./models/Visitor.js";
+import Chat from "./models/Chat.js";
+dotenv.config();
+
 // ===============================
 // ⚙️ Configuración inicial
 // ===============================
@@ -35,14 +35,13 @@ app.use((req, res, next) => {
 const MONGO_URI = process.env.MONGO_URI || "";
 if (MONGO_URI) {
     mongoose.connect(MONGO_URI)
-        .then(() => console.log("✅ Conectado a MongoDB (Railway)"))
+        .then(() => console.log("✅ Conectado a MongoDB"))
         .catch((err) => console.error("❌ Error Mongo:", err));
 } else console.log("⚠️ MongoDB deshabilitado (sin MONGO_URI)");
 
 // ===============================
-// 🌐 URLs
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "";
-const BACKEND_URL = process.env.BACKEND_URL || "https://portfolio-server-production-67e9.up.railway.app";
+// 🌐 URLs del modelo
+const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "http://127.0.0.1:8080/v1/chat/completions";
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "";
 
 // ===============================
@@ -65,70 +64,65 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
             if (attempt === retries) throw err;
         }
     }
-}
-
-// ===============================
-// 🔹 Endpoint /api/chat
-// ===============================
-const contactSessions = new Map();
-const contactFields = ["nombre", "apellido", "email", "asunto"];
-const contactQuestions = {
-    nombre: "¿Cuál es tu nombre?",
-    apellido: "¿Cuál es tu apellido?",
-    email: "¿Cuál es tu email?",
-    asunto: "¿Cuál es el asunto de tu mensaje?",
-};
-
-app.post("/api/chat", async (req, res) => {
+} app.post("/api/chat", async (req, res) => {
     const { prompt, sessionId } = req.body;
     if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
     console.log("🟢 POST /api/chat:", prompt);
 
-    const normalized = prompt.toLowerCase().trim();
-    const triggerKeywords = ["contratar", "servicio", "precio", "presupuesto", "trabajar contigo", "cotización"];
-    const shouldTriggerWebhook = triggerKeywords.some(kw => normalized.includes(kw));
-
-    let session = contactSessions.get(sessionId);
-
-    if (shouldTriggerWebhook && !session) {
-        session = { currentField: 0, data: {} };
-        contactSessions.set(sessionId, session);
-        return res.json({ reply: contactQuestions[contactFields[0]], source: "formulario-contacto" });
-    }
-
-    if (session) {
-        const field = contactFields[session.currentField];
-        session.data[field] = prompt;
-        session.currentField++;
-        if (session.currentField < contactFields.length) {
-            contactSessions.set(sessionId, session);
-            return res.json({ reply: contactQuestions[contactFields[session.currentField]], source: "formulario-contacto" });
-        } else {
-            try {
-                const msg = session.data;
-                if (N8N_WEBHOOK_URL) {
-                    await fetchWithRetry(N8N_WEBHOOK_URL, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ prompt, sessionId, msg }),
-                    });
-                    console.log("📡 Datos enviados a n8n:", msg);
-                }
-            } catch (err) {
-                console.error("❌ Error enviando a n8n:", err);
-            }
-            contactSessions.delete(sessionId);
-            await Chat.create({ prompt, reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.", source: "formulario-completo" });
-            return res.json({ reply: "¡Gracias! Tu mensaje ha sido enviado. Te contactaré pronto.", source: "formulario-completo" });
+    try {
+        // Recuperar historial previo de esta sesión
+        let history = [];
+        if (sessionId) {
+            const chats = await Chat.find({ sessionId }).sort({ timestamp: 1 });
+            history = chats.map(c => [
+                { role: "user", content: c.prompt },
+                { role: "assistant", content: c.reply }
+            ]).flat();
         }
-    }
 
-    return res.json({ reply: "❌ No se pudo procesar el prompt.", source: "error" });
+        // Mensaje de sistema con contexto personal
+        const systemMessage = {
+            role: "system",
+            content: `Eres un asistente experto en Full Stack Development. 
+                     Tu usuario se llama Jose Manaure. 
+                     Jose es desarrollador especializado en Next.js y NestJS. 
+                     Su stack incluye React, Node.js, MongoDB y Tailwind. 
+                     Debes responder preguntas sobre Jose y sus proyectos.`
+        };
+
+        const messages = [systemMessage, ...history, { role: "user", content: prompt }];
+
+        const modelResponse = await fetchWithRetry(LOCAL_MODEL_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages, stream: false }),
+        });
+
+        const json = await modelResponse.json();
+        const assistantReply = json.choices?.[0]?.message?.content || "No recibí respuesta del modelo.";
+
+        // Guardar chat actual en Mongo
+        if (sessionId) {
+            const savedChat = await Chat.create({
+                prompt,
+                reply: assistantReply,
+                sessionId,
+                timestamp: new Date(),
+            });
+            console.log("💾 Chat guardado:", savedChat);
+
+        }
+
+        res.json({ reply: assistantReply });
+    } catch (err) {
+        console.error("❌ Error /api/chat:", err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ===============================
-// 🧠 Endpoint SSE
+// 🔹 Endpoint SSE con contexto personal
 // ===============================
 app.get("/api/chat-sse", async (req, res) => {
     const { prompt, sessionId } = req.query;
@@ -140,32 +134,70 @@ app.get("/api/chat-sse", async (req, res) => {
         Connection: "keep-alive",
     });
 
-    const modelUrl = LOCAL_MODEL_URL || `${BACKEND_URL}/completion`;
-    console.log("📡 Conectando al modelo:", modelUrl);
+    // === Tu contexto personal fijo ===
+    const CONTEXTO_PERSONAL = `
+    Eres un asistente experto en Full Stack Development. 
+    Tu usuario se llama Jose Manaure. 
+    Jose es desarrollador especializado en Next.js y NestJS. 
+    Su stack incluye React, Node.js, MongoDB y Tailwind. 
+    Debes responder preguntas sobre Jose y sus proyectos
+`;
 
     try {
-        const response = await fetchWithRetry(modelUrl, {
+        const response = await fetchWithRetry(LOCAL_MODEL_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, stream: true }),
+            body: JSON.stringify({
+                messages: [
+                    { role: "system", content: CONTEXTO_PERSONAL }, // contexto fijo
+                    { role: "user", content: prompt } // mensaje del usuario
+                ],
+                stream: true,
+            }),
         });
 
         if (!response.body) throw new Error("No hay body del modelo");
 
         const decoder = new TextDecoder();
-        let partialText = "";
+        let buffer = "";
+
         for await (const chunk of response.body) {
-            partialText += decoder.decode(chunk, { stream: true });
-            const lines = partialText.split(/\r?\n/);
-            partialText = lines.pop() || "";
+            buffer += decoder.decode(chunk, { stream: true });
+
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || "";
+
             for (let line of lines) {
-                if (!line || line === "[FIN]") continue;
-                res.write(`data: ${line}\n\n`);
+                line = line.trim();
+                if (!line || line === "[DONE]" || line === "[FIN]") continue;
+
+                if (line.startsWith("data:")) {
+                    line = line.replace("data:", "").trim();
+                }
+
+                try {
+                    const parsed = JSON.parse(line);
+
+                    // llama.cpp → delta suelto
+                    const token =
+                        parsed.content ||
+                        parsed.delta?.content ||
+                        parsed.choices?.[0]?.delta?.content ||
+                        "";
+
+                    if (token) {
+                        res.write(`data: ${token}\n\n`);
+                    }
+                } catch (e) {
+                    // Si no es JSON, puede ser texto plano
+                    res.write(`data: ${line}\n\n`);
+                }
             }
         }
-        if (partialText.trim()) res.write(`data: ${partialText.trim()}\n\n`);
+
         res.write("data: [FIN]\n\n");
         res.end();
+
     } catch (err) {
         console.error("❌ SSE error:", err.message);
         res.write(`data: ⚠️ Error al conectar con el modelo: ${err.message}\n\n`);
@@ -173,6 +205,7 @@ app.get("/api/chat-sse", async (req, res) => {
         res.end();
     }
 });
+
 
 // ===============================
 // 🔹 Visitor
@@ -196,7 +229,7 @@ app.post("/api/visitor", async (req, res) => {
 // 🩵 Raíz
 // ===============================
 app.get("/", (req, res) => {
-    res.send("✅ Backend Relay de José Manaure en Railway, SSE listo y conectado al modelo local.");
+    res.send("✅ Backend Relay corriendo. SSE y POST listos, conectado a LLaMA.");
 });
 
 // ===============================
