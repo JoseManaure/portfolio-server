@@ -21,9 +21,11 @@ const allowedOrigins = [
     "https://pfweb-nu.vercel.app",
     "http://localhost:3000",
 ];
+
 app.use((req, res, next) => {
     const origin = req.headers.origin;
     if (allowedOrigins.includes(origin)) res.header("Access-Control-Allow-Origin", origin);
+
     res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     if (req.method === "OPTIONS") return res.sendStatus(200);
@@ -31,7 +33,8 @@ app.use((req, res, next) => {
 });
 
 // ===============================
-// 📦 MongoDB (opcional)
+// 📦 MongoDB
+// ===============================
 const MONGO_URI = process.env.MONGO_URI || "";
 if (MONGO_URI) {
     mongoose.connect(MONGO_URI)
@@ -40,38 +43,54 @@ if (MONGO_URI) {
 } else console.log("⚠️ MongoDB deshabilitado (sin MONGO_URI)");
 
 // ===============================
-// 🌐 URLs del modelo
-const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || "http://127.0.0.1:8080/v1/chat/completions";
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "";
+// 🌐 Config modelo llama.cpp
+// ===============================
+const LOCAL_MODEL_URL =
+    process.env.LOCAL_MODEL_URL ||
+    "http://127.0.0.1:8080/v1/chat/completions";
+
+// Modelo instalado en tu carpeta /models
+const MODEL_NAME = process.env.MODEL_NAME || "mistral-7b-instruct-v0.2.Q4_0.gguf";
+
 
 // ===============================
-// 🧠 Función fetch con reintentos
+// 🧠 fetch con reintentos
+// ===============================
 async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
     if (!url) throw new Error("URL no definida");
+
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
+
             const response = await fetch(url, { ...options, signal: controller.signal });
             clearTimeout(id);
+
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(`HTTP ${response.status}: ${text}`);
             }
             return response;
+
         } catch (err) {
             console.warn(`⚠️ Fetch intento ${attempt} fallido: ${err.message}`);
             if (attempt === retries) throw err;
         }
     }
-} app.post("/api/chat", async (req, res) => {
+}
+
+// ===============================
+// 🔹 Endpoint POST /api/chat
+// ===============================
+app.post("/api/chat", async (req, res) => {
     const { prompt, sessionId } = req.body;
     if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
     console.log("🟢 POST /api/chat:", prompt);
 
     try {
-        // Recuperar historial previo de esta sesión
+        // Historial
         let history = [];
         if (sessionId) {
             const chats = await Chat.find({ sessionId }).sort({ timestamp: 1 });
@@ -81,7 +100,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
             ]).flat();
         }
 
-        // Mensaje de sistema con contexto personal
+        // Mensaje de sistema con tu contexto
         const systemMessage = {
             role: "system",
             content: `Eres un asistente experto en Full Stack Development. 
@@ -96,13 +115,17 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
         const modelResponse = await fetchWithRetry(LOCAL_MODEL_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages, stream: false }),
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages,
+                stream: false
+            }),
         });
 
         const json = await modelResponse.json();
         const assistantReply = json.choices?.[0]?.message?.content || "No recibí respuesta del modelo.";
 
-        // Guardar chat actual en Mongo
+        // Guardar en Mongo
         if (sessionId) {
             const savedChat = await Chat.create({
                 prompt,
@@ -111,10 +134,10 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
                 timestamp: new Date(),
             });
             console.log("💾 Chat guardado:", savedChat);
-
         }
 
         res.json({ reply: assistantReply });
+
     } catch (err) {
         console.error("❌ Error /api/chat:", err.message);
         res.status(500).json({ error: err.message });
@@ -122,10 +145,10 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
 });
 
 // ===============================
-// 🔹 Endpoint SSE con contexto personal
+// 🔹 SSE /api/chat-sse
 // ===============================
 app.get("/api/chat-sse", async (req, res) => {
-    const { prompt, sessionId } = req.query;
+    const { prompt } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
     res.writeHead(200, {
@@ -134,13 +157,12 @@ app.get("/api/chat-sse", async (req, res) => {
         Connection: "keep-alive",
     });
 
-    // === Tu contexto personal fijo ===
     const CONTEXTO_PERSONAL = `
     Eres un asistente experto en Full Stack Development. 
     Tu usuario se llama Jose Manaure. 
     Jose es desarrollador especializado en Next.js y NestJS. 
     Su stack incluye React, Node.js, MongoDB y Tailwind. 
-    Debes responder preguntas sobre Jose y sus proyectos
+    Debes responder preguntas sobre Jose y sus proyectos.
 `;
 
     try {
@@ -148,11 +170,12 @@ app.get("/api/chat-sse", async (req, res) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+                model: MODEL_NAME,
                 messages: [
-                    { role: "system", content: CONTEXTO_PERSONAL }, // contexto fijo
-                    { role: "user", content: prompt } // mensaje del usuario
+                    { role: "system", content: CONTEXTO_PERSONAL },
+                    { role: "user", content: prompt }
                 ],
-                stream: true,
+                stream: true
             }),
         });
 
@@ -161,6 +184,7 @@ app.get("/api/chat-sse", async (req, res) => {
         const decoder = new TextDecoder();
         let buffer = "";
 
+        // Leer línea por línea
         for await (const chunk of response.body) {
             buffer += decoder.decode(chunk, { stream: true });
 
@@ -169,7 +193,7 @@ app.get("/api/chat-sse", async (req, res) => {
 
             for (let line of lines) {
                 line = line.trim();
-                if (!line || line === "[DONE]" || line === "[FIN]") continue;
+                if (!line || line === "[DONE]") continue;
 
                 if (line.startsWith("data:")) {
                     line = line.replace("data:", "").trim();
@@ -177,19 +201,14 @@ app.get("/api/chat-sse", async (req, res) => {
 
                 try {
                     const parsed = JSON.parse(line);
-
-                    // llama.cpp → delta suelto
                     const token =
                         parsed.content ||
                         parsed.delta?.content ||
                         parsed.choices?.[0]?.delta?.content ||
                         "";
 
-                    if (token) {
-                        res.write(`data: ${token}\n\n`);
-                    }
-                } catch (e) {
-                    // Si no es JSON, puede ser texto plano
+                    if (token) res.write(`data: ${token}\n\n`);
+                } catch {
                     res.write(`data: ${line}\n\n`);
                 }
             }
@@ -206,7 +225,6 @@ app.get("/api/chat-sse", async (req, res) => {
     }
 });
 
-
 // ===============================
 // 🔹 Visitor
 // ===============================
@@ -216,9 +234,12 @@ app.post("/api/visitor", async (req, res) => {
         const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
         const userAgent = req.headers["user-agent"];
         const visitor = new Visitor({ visitorId, ip, userAgent });
+
         await visitor.save();
         console.log(`👤 Nuevo visitante: ${visitorId}`);
+
         res.status(201).json({ success: true, visitorId });
+
     } catch (err) {
         console.error("❌ Error creando visitante:", err);
         res.status(500).json({ success: false, error: err.message });
