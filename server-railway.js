@@ -151,77 +151,35 @@ app.get("/api/chat-sse", async (req, res) => {
     const { prompt } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
+    // 🔍 Detectar palabras de interés para activar n8n
+    const palabrasClave = ["contratar", "empleo", "trabajo", "trabajar", "hire", "job", "reclutar", "reclutador"];
+    const activarWebhook = palabrasClave.some(p => prompt.toLowerCase().includes(p));
+
+    // 🔵 Si activa webhook → enviar mensaje a n8n (NO bloquea SSE)
+    if (activarWebhook) {
+        fetch("https://cool-sheep-play.loca.lt/webhook/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                mensaje: prompt,
+                fecha: new Date().toISOString()
+            }),
+        }).catch(err => console.error("❌ Error enviando a n8n:", err.message));
+    }
+
     res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
     });
 
-    // ================================
-    // 1. DETECCIÓN DE PALABRAS CLAVE
-    // ================================
-    const keywords = ["contratar", "empleo", "vacante", "trabajo", "reclutar", "curriculum", "cv"];
-    const contienePalabrasClave = keywords.some(k => prompt.toLowerCase().includes(k));
-
-    // ================================
-    // 2. SI TIENE PALABRA CLAVE → DISPARAR N8N Y RESPONDER MANUAL
-    // ================================
-    if (contienePalabrasClave) {
-        try {
-            // Enviar a n8n
-            await fetch("https://flat-trains-sleep.loca.lt/webhook/chat", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Bypass-Tunnel-Reminder": "true" // necesario para loca.lt
-                },
-                body: JSON.stringify({
-                    text: prompt,
-                    sessionId // opcional, si quieres rastrear la sesión
-                })
-            });
-
-        } catch (error) {
-            console.log("⚠️ Error enviando a n8n:", error.message);
-        }
-
-        // RESPUESTA PERSONALIZADA PROFESIONAL
-        const respuestaProfesional = `
-Hola, gracias por tu interés en mi perfil profesional.
-
-Soy Jose Manaure, desarrollador Full Stack especializado en **Next.js y NestJS**, con experiencia en:
-- React
-- Node.js
-- MongoDB
-- Tailwind
-- Docker
-- Arquitecturas limpias y escalables
-
-Si deseas contratarme o saber más sobre mis proyectos, estaré encantado de ayudarte.
-`;
-
-        // Enviar por SSE simulando stream real
-        const partes = respuestaProfesional.split(" ");
-        for (const parte of partes) {
-            res.write(`data: ${parte}\n\n`);
-            await new Promise(r => setTimeout(r, 25)); // efecto typing
-        }
-
-        res.write("data: [FIN]\n\n");
-        return res.end();  // 🔥 Importante: NO sigue al modelo
-    }
-
-    // ================================
-    // 3. SI NO HAY PALABRAS CLAVE → VA AL MODELO LOCAL
-    // ================================
-
     const CONTEXTO_PERSONAL = `
-Eres un asistente experto en desarrollo Full Stack.
-Tu usuario se llama Jose Manaure.
-Jose es desarrollador especializado en Next.js y NestJS.
-Su stack incluye React, Node.js, MongoDB y Tailwind.
-Debes responder SIEMPRE en español, de forma natural y profesional.
-`;
+        Eres un asistente experto en desarrollo Full Stack.
+        Tu usuario se llama Jose Manaure.
+        Jose es desarrollador especializado en Next.js y NestJS.
+        Su stack incluye React, Node.js, MongoDB y Tailwind.
+        Debes responder SIEMPRE en español, de forma natural y profesional.
+    `;
 
     try {
         const response = await fetchWithRetry(LOCAL_MODEL_URL, {
@@ -264,7 +222,7 @@ Debes responder SIEMPRE en español, de forma natural y profesional.
                         parsed.choices?.[0]?.delta?.content ||
                         "";
 
-                    if (token) res.write("data: " + token + "\n\n");
+                    if (token) res.write(`data: ${token}\n\n`);
                 } catch {
                     res.write(`data: ${line}\n\n`);
                 }
@@ -281,7 +239,6 @@ Debes responder SIEMPRE en español, de forma natural y profesional.
         res.end();
     }
 });
-
 
 // ===============================
 // 🔹 Visitor
