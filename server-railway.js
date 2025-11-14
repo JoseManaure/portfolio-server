@@ -274,6 +274,52 @@ app.get("/", (req, res) => {
     res.send("✅ Backend Relay corriendo. SSE y POST listos, conectado a LLaMA.");
 });
 
+
+
+// Obtener chats con paginación y filtro por palabra
+app.get("/api/dashboard/chats", async (req, res) => {
+    try {
+        const { page = 1, limit = 20, search = "" } = req.query;
+        const filter = search
+            ? { prompt: { $regex: search, $options: "i" } }
+            : {};
+
+        const chats = await Chat.find(filter)
+            .sort({ timestamp: -1 })
+            .skip((+page - 1) * +limit)
+            .limit(+limit);
+
+        const total = await Chat.countDocuments(filter);
+
+        res.json({ chats, total });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Obtener visitantes con paginación y filtro por IP
+app.get("/api/dashboard/visitors", async (req, res) => {
+    try {
+        const { page = 1, limit = 20, ip = "" } = req.query;
+        const filter = ip ? { ip: { $regex: ip, $options: "i" } } : {};
+
+        const visitors = await Visitor.find(filter)
+            .sort({ createdAt: -1 })
+            .skip((+page - 1) * +limit)
+            .limit(+limit);
+
+        const total = await Visitor.countDocuments(filter);
+
+        res.json({ visitors, total });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 // ===============================
 // 🚀 Arranque
 // ===============================
