@@ -288,6 +288,7 @@ app.post("/api/visitor", async (req, res) => {
         });
 
         await visitor.save();
+        console.log("📍 Ubicación detectada:", location);
         console.log(`👤 Nuevo visitante: ${visitorId}`);
 
         res.status(201).json({ success: true, visitorId });
