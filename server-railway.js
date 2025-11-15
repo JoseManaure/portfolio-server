@@ -6,6 +6,7 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 import Visitor from "./models/Visitor.js";
 import Chat from "./models/Chat.js";
+import { getLocationFromIP } from "./utils/getLocationFromIP.js";
 dotenv.config();
 
 // ===============================
@@ -275,13 +276,21 @@ app.post("/api/visitor", async (req, res) => {
         const visitorId = uuidv4();
         const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
         const userAgent = req.headers["user-agent"];
-        const visitor = new Visitor({ visitorId, ip, userAgent });
+
+        // Obtener ubicación
+        const location = await getLocationFromIP(ip);
+
+        const visitor = new Visitor({
+            visitorId,
+            ip,
+            userAgent,
+            location, // <-- guarda {lat, lon, city, country}
+        });
 
         await visitor.save();
         console.log(`👤 Nuevo visitante: ${visitorId}`);
 
         res.status(201).json({ success: true, visitorId });
-
     } catch (err) {
         console.error("❌ Error creando visitante:", err);
         res.status(500).json({ success: false, error: err.message });

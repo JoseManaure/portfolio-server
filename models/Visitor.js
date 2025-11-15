@@ -8,9 +8,15 @@ const MessageSchema = new mongoose.Schema({
 });
 
 const VisitorSchema = new mongoose.Schema({
-    visitorId: { type: String, unique: true },
-    messages: [MessageSchema],
-    createdAt: { type: Date, default: Date.now },
-});
+    visitorId: String,
+    ip: String,
+    userAgent: String,
+    location: {
+        lat: Number,
+        lon: Number,
+        city: String,
+        country: String
+    }
+}, { timestamps: true });
 
 export default mongoose.models.Visitor || mongoose.model("Visitor", VisitorSchema);
