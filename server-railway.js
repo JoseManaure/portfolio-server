@@ -205,6 +205,7 @@ app.get("/api/chat-sse", async (req, res) => {
 
         const decoder = new TextDecoder();
         let buffer = "";
+        let fullResponse = "";
 
         for await (const chunk of response.body) {
             buffer += decoder.decode(chunk, { stream: true });
@@ -228,12 +229,32 @@ app.get("/api/chat-sse", async (req, res) => {
                         parsed.choices?.[0]?.delta?.content ||
                         "";
 
-                    if (token) res.write(`data: ${token}\n\n`);
+                    if (token) {
+                        fullResponse += token; // <-- acumula
+                        res.write(`data: ${token}\n\n`);
+                    }
                 } catch {
                     res.write(`data: ${line}\n\n`);
                 }
             }
         }
+
+        // ===============================
+        // 💾 GUARDAR CHAT COMPLETO EN MONGO
+        // ===============================
+        try {
+            const sessionId = req.query.sessionId || uuidv4(); // si no viene, generamos uno
+            await Chat.create({
+                prompt,
+                reply: fullResponse,
+                sessionId,
+                timestamp: new Date()
+            });
+            console.log("💾 Chat guardado vía SSE");
+        } catch (err) {
+            console.error("❌ Error guardando chat SSE:", err.message);
+        }
+
 
         res.write("data: [FIN]\n\n");
         res.end();
