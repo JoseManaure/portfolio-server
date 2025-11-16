@@ -275,12 +275,15 @@ app.get("/api/chat-sse", async (req, res) => {
 // ===============================
 // 🔹 Visitor
 // ===============================
+// ===============================
+// 🔹 Visitor
+// ===============================
 app.post("/api/visitor", async (req, res) => {
     try {
-        let visitorId = req.cookies.visitorId; // <-- revisamos cookie
+        let visitorId = req.cookies.visitorId; // revisamos si ya existe cookie
 
         if (!visitorId) {
-            visitorId = uuidv4(); // nuevo visitorId
+            visitorId = uuidv4(); // generamos nuevo visitorId
 
             const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
             const userAgent = req.headers["user-agent"];
@@ -298,12 +301,14 @@ app.post("/api/visitor", async (req, res) => {
             console.log("📍 Ubicación detectada:", location);
             console.log(`👤 Nuevo visitante: ${visitorId}`);
 
-            // Guardamos cookie en el navegador, expira en 30 días
+            // Configuración de cookie según entorno
+            const isProduction = process.env.NODE_ENV === "production";
+
             res.cookie("visitorId", visitorId, {
                 maxAge: 30 * 24 * 60 * 60 * 1000, // 30 días
                 httpOnly: true,
-                sameSite: "lax",
-                secure: process.env.NODE_ENV === "production",
+                secure: isProduction,           // HTTPS obligatorio en producción
+                sameSite: isProduction ? "none" : "lax", // cross-site en producción, lax en local
             });
         }
 
@@ -313,6 +318,7 @@ app.post("/api/visitor", async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
 
 // ===============================
 // 🩵 Raíz
