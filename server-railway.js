@@ -10,6 +10,8 @@ import { getLocationFromIP } from "./utils/getLocationFromIP.js";
 import cookieParser from "cookie-parser";
 dotenv.config();
 
+
+
 // ===============================
 // ⚙️ Configuración inicial
 // ===============================
@@ -27,14 +29,10 @@ const allowedOrigins = [
 
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (allowedOrigins.includes(origin)) {
-        res.header("Access-Control-Allow-Origin", origin);
-        res.header("Access-Control-Allow-Credentials", "true"); // 🔹 Muy importante
-    }
+    if (allowedOrigins.includes(origin)) res.header("Access-Control-Allow-Origin", origin);
 
     res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
     if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
 });
@@ -97,17 +95,13 @@ async function fetchWithRetry(url, options = {}, retries = 3, timeout = 90000) {
 // 🔹 Endpoint POST /api/chat
 // ===============================
 app.post("/api/chat", async (req, res) => {
-    // ✅ Verificar consentimiento de cookies
-    if (!req.cookies.cookieConsent) {
-        return res.status(403).json({ error: "Consentimiento de cookies requerido." });
-    }
-
     const { prompt, sessionId } = req.body;
     if (!prompt) return res.status(400).json({ error: "Falta prompt" });
 
     console.log("🟢 POST /api/chat:", prompt);
 
     try {
+        // Historial
         let history = [];
         if (sessionId) {
             const chats = await Chat.find({ sessionId }).sort({ timestamp: 1 });
@@ -117,6 +111,7 @@ app.post("/api/chat", async (req, res) => {
             ]).flat();
         }
 
+        // Mensaje de sistema con tu contexto
         const systemMessage = {
             role: "system",
             content: `Eres un asistente experto en Full Stack Development. 
@@ -141,6 +136,7 @@ app.post("/api/chat", async (req, res) => {
         const json = await modelResponse.json();
         const assistantReply = json.choices?.[0]?.message?.content || "No recibí respuesta del modelo.";
 
+        // Guardar en Mongo
         if (sessionId) {
             const savedChat = await Chat.create({
                 prompt,
@@ -163,17 +159,14 @@ app.post("/api/chat", async (req, res) => {
 // 🔹 SSE /api/chat-sse
 // ===============================
 app.get("/api/chat-sse", async (req, res) => {
-    // ✅ Verificar consentimiento de cookies
-    if (!req.cookies.cookieConsent) {
-        return res.status(403).send("Consentimiento de cookies requerido.");
-    }
-
     const { prompt } = req.query;
     if (!prompt) return res.status(400).send("Falta prompt");
 
+    // 🔍 Detectar palabras de interés para activar n8n
     const palabrasClave = ["contratar", "empleo", "trabajo", "trabajar", "hire", "job", "reclutar", "reclutador"];
     const activarWebhook = palabrasClave.some(p => prompt.toLowerCase().includes(p));
 
+    // 🔵 Si activa webhook → enviar mensaje a n8n (NO bloquea SSE)
     if (activarWebhook) {
         fetch("https://flat-trains-sleep.loca.lt/webhook/chat", {
             method: "POST",
@@ -242,7 +235,7 @@ app.get("/api/chat-sse", async (req, res) => {
                         "";
 
                     if (token) {
-                        fullResponse += token;
+                        fullResponse += token; // <-- acumula
                         res.write(`data: ${token}\n\n`);
                     }
                 } catch {
@@ -251,8 +244,11 @@ app.get("/api/chat-sse", async (req, res) => {
             }
         }
 
+        // ===============================
+        // 💾 GUARDAR CHAT COMPLETO EN MONGO
+        // ===============================
         try {
-            const sessionId = req.query.sessionId || uuidv4();
+            const sessionId = req.query.sessionId || uuidv4(); // si no viene, generamos uno
             await Chat.create({
                 prompt,
                 reply: fullResponse,
@@ -263,6 +259,7 @@ app.get("/api/chat-sse", async (req, res) => {
         } catch (err) {
             console.error("❌ Error guardando chat SSE:", err.message);
         }
+
 
         res.write("data: [FIN]\n\n");
         res.end();
@@ -275,15 +272,16 @@ app.get("/api/chat-sse", async (req, res) => {
     }
 });
 
+
 // ===============================
 // 🔹 Visitor
 // ===============================
 app.post("/api/visitor", async (req, res) => {
     try {
-        let visitorId = req.cookies.visitorId;
+        let visitorId = req.cookies.visitorId; // revisamos si ya existe cookie
 
         if (!visitorId) {
-            visitorId = uuidv4();
+            visitorId = uuidv4(); // generamos nuevo visitorId
 
             const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
             const userAgent = req.headers["user-agent"];
@@ -301,13 +299,14 @@ app.post("/api/visitor", async (req, res) => {
             console.log("📍 Ubicación detectada:", location);
             console.log(`👤 Nuevo visitante: ${visitorId}`);
 
+            // Configuración de cookie según entorno
             const isProduction = process.env.NODE_ENV === "production";
 
             res.cookie("visitorId", visitorId, {
-                maxAge: 30 * 24 * 60 * 60 * 1000,
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 días
                 httpOnly: true,
-                secure: isProduction,
-                sameSite: isProduction ? "none" : "lax",
+                secure: isProduction,           // HTTPS obligatorio en producción
+                sameSite: isProduction ? "none" : "lax", // cross-site en producción, lax en local
             });
         }
 
@@ -318,17 +317,6 @@ app.post("/api/visitor", async (req, res) => {
     }
 });
 
-// ===============================
-// ✅ Endpoint para aceptar cookies
-// ===============================
-app.post("/api/cookie-consent", (req, res) => {
-    res.cookie("cookieConsent", "true", {
-        maxAge: 365 * 24 * 60 * 60 * 1000, // 1 año
-        httpOnly: true,
-        sameSite: "lax"
-    });
-    res.json({ success: true });
-});
 
 // ===============================
 // 🩵 Raíz
@@ -337,9 +325,9 @@ app.get("/", (req, res) => {
     res.send("✅ Backend Relay corriendo. SSE y POST listos, conectado a LLaMA.");
 });
 
-// ===============================
-// Dashboard chats
-// ===============================
+
+
+// Obtener chats con paginación y filtro por palabra
 app.get("/api/dashboard/chats", async (req, res) => {
     try {
         const { page = 1, limit = 20, search = "" } = req.query;
@@ -361,7 +349,7 @@ app.get("/api/dashboard/chats", async (req, res) => {
     }
 });
 
-// Dashboard visitors
+// Obtener visitantes con paginación y filtro por IP
 app.get("/api/dashboard/visitors", async (req, res) => {
     try {
         const { page = 1, limit = 20, ip = "" } = req.query;
@@ -380,6 +368,8 @@ app.get("/api/dashboard/visitors", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+
 
 // ===============================
 // 🚀 Arranque
