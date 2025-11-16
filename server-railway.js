@@ -7,13 +7,17 @@ import dotenv from "dotenv";
 import Visitor from "./models/Visitor.js";
 import Chat from "./models/Chat.js";
 import { getLocationFromIP } from "./utils/getLocationFromIP.js";
+import cookieParser from "cookie-parser";
 dotenv.config();
+
+
 
 // ===============================
 // ⚙️ Configuración inicial
 // ===============================
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 
 // ============================
 // 🔧 CORS
@@ -273,23 +277,35 @@ app.get("/api/chat-sse", async (req, res) => {
 // ===============================
 app.post("/api/visitor", async (req, res) => {
     try {
-        const visitorId = uuidv4();
-        const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-        const userAgent = req.headers["user-agent"];
+        let visitorId = req.cookies.visitorId; // <-- revisamos cookie
 
-        // Obtener ubicación
-        const location = await getLocationFromIP(ip);
+        if (!visitorId) {
+            visitorId = uuidv4(); // nuevo visitorId
 
-        const visitor = new Visitor({
-            visitorId,
-            ip,
-            userAgent,
-            location, // <-- guarda {lat, lon, city, country}
-        });
+            const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+            const userAgent = req.headers["user-agent"];
 
-        await visitor.save();
-        console.log("📍 Ubicación detectada:", location);
-        console.log(`👤 Nuevo visitante: ${visitorId}`);
+            const location = await getLocationFromIP(ip);
+
+            const visitor = new Visitor({
+                visitorId,
+                ip,
+                userAgent,
+                location,
+            });
+
+            await visitor.save();
+            console.log("📍 Ubicación detectada:", location);
+            console.log(`👤 Nuevo visitante: ${visitorId}`);
+
+            // Guardamos cookie en el navegador, expira en 30 días
+            res.cookie("visitorId", visitorId, {
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 días
+                httpOnly: true,
+                sameSite: "lax",
+                secure: process.env.NODE_ENV === "production",
+            });
+        }
 
         res.status(201).json({ success: true, visitorId });
     } catch (err) {
