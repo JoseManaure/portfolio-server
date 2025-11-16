@@ -58,9 +58,14 @@ const LOCAL_MODEL_URL =
 const MODEL_NAME = process.env.MODEL_NAME || "mistral-7b-instruct-v0.2.Q4_0.gguf";
 
 app.use((req, res, next) => {
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    const ua = req.headers["user-agent"];
-    console.log(`📡 Nueva petición → IP: ${ip} | UA: ${ua} | Ruta: ${req.method} ${req.url}`);
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+        res.header("Access-Control-Allow-Origin", origin); // No pongas '*'
+        res.header("Access-Control-Allow-Credentials", "true"); // ✅ Necesario
+    }
+    res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
 });
 
@@ -305,8 +310,8 @@ app.post("/api/visitor", async (req, res) => {
             res.cookie("visitorId", visitorId, {
                 maxAge: 30 * 24 * 60 * 60 * 1000, // 30 días
                 httpOnly: true,
-                secure: isProduction,           // HTTPS obligatorio en producción
-                sameSite: isProduction ? "none" : "lax", // cross-site en producción, lax en local
+                secure: process.env.NODE_ENV === "production", // HTTPS obligatorio en prod
+                sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // para que funcione cross-site
             });
         }
 
